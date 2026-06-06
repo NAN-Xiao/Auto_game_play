@@ -290,9 +290,13 @@ async def chat(device_id: str, message: str) -> str:
                 )
 
             original_max_steps = agent.agent_config.max_steps
+            original_run_limit_type = agent.agent_config.run_limit_type
+            original_max_duration_seconds = agent.agent_config.max_duration_seconds
             original_system_prompt = agent.agent_config.system_prompt
 
             agent.agent_config.max_steps = mcp_max_steps
+            agent.agent_config.run_limit_type = "steps"
+            agent.agent_config.max_duration_seconds = None
             agent.agent_config.system_prompt = MCP_SYSTEM_PROMPT_ZH
 
             try:
@@ -344,6 +348,8 @@ async def chat(device_id: str, message: str) -> str:
                 )
             finally:
                 agent.agent_config.max_steps = original_max_steps
+                agent.agent_config.run_limit_type = original_run_limit_type
+                agent.agent_config.max_duration_seconds = original_max_duration_seconds
                 agent.agent_config.system_prompt = original_system_prompt
         except DeviceBusyError:
             tool_span.set_attributes({"success": False, "error_kind": "busy"})

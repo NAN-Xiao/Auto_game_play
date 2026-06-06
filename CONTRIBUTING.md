@@ -47,7 +47,7 @@
 确保你的环境中已安装：
 
 - **Python 3.11+**
-- **Node.js 18+** 和 **pnpm**
+- **Node.js 18+** 和 **npm**
 - **uv**（Python 包管理器）- [安装教程](https://docs.astral.sh/uv/getting-started/installation/)
 - **ADB** (Android Debug Bridge) - 需要添加到系统 PATH
 
@@ -112,7 +112,7 @@ uv sync
 **前端依赖**：
 ```bash
 cd frontend
-pnpm install
+npm install
 ```
 
 ### 2. 启动开发服务器
@@ -128,7 +128,7 @@ uv run autoglm-gui --base-url http://localhost:8080/v1 --reload
 **启动前端**（热重载）：
 ```bash
 cd frontend
-pnpm dev
+npm run dev
 ```
 
 前端开发服务器会在 `http://localhost:3000` 启动，并自动代理 API 请求到后端。

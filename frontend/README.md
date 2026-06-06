@@ -17,13 +17,13 @@ npx gitpick TanStack/router/tree/main/examples/react/quickstart-file-based quick
 Install dependencies:
 
 ```sh
-pnpm install
+npm install
 ```
 
 Start the development server:
 
 ```sh
-pnpm dev
+npm run dev
 ```
 
 ## Build
@@ -31,7 +31,7 @@ pnpm dev
 Build for production:
 
 ```sh
-pnpm build
+npm run build
 ```
 
 ## About This Example

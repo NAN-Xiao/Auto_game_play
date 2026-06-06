@@ -117,7 +117,9 @@ class FakeConfigManager:
             api_key="EMPTY",
             agent_type="glm-async",
             agent_config_params={"thinking_mode": "fast"},
+            run_limit_type="steps",
             default_max_steps=120,
+            default_max_duration_seconds=None,
             layered_max_turns=50,
             decision_base_url="http://localhost:9999/v1",
             decision_model_name="planner-model",
@@ -274,6 +276,7 @@ def test_save_config_preserves_explicit_null_default_max_steps(
         json={
             "base_url": "http://localhost:8080/v1",
             "model_name": "autoglm-phone-9b",
+            "run_limit_type": "unlimited",
             "default_max_steps": None,
             "layered_max_turns": 50,
         },
@@ -281,10 +284,118 @@ def test_save_config_preserves_explicit_null_default_max_steps(
 
     assert response.status_code == 200
     assert env["config_manager"].save_kwargs is not None
+    assert env["config_manager"].save_kwargs["run_limit_type"] == "unlimited"
     assert env["config_manager"].save_kwargs["default_max_steps"] is None
     assert env["config_manager"].save_kwargs["default_max_steps_set"] is True
     assert env["config_manager"].save_kwargs["layered_max_turns"] == 50
     assert env["config_manager"].save_kwargs["layered_max_turns_set"] is True
+
+
+def test_save_config_passes_run_limit_fields(env: dict[str, Any]) -> None:
+    response = env["client"].post(
+        "/api/config",
+        json={
+            "base_url": "http://localhost:8080/v1",
+            "model_name": "autoglm-phone-9b",
+            "run_limit_type": "duration",
+            "default_max_steps": None,
+            "default_max_duration_seconds": 86400,
+            "layered_max_turns": 50,
+        },
+    )
+
+    assert response.status_code == 200
+    assert env["config_manager"].save_kwargs is not None
+    assert env["config_manager"].save_kwargs["run_limit_type"] == "duration"
+    assert env["config_manager"].save_kwargs["run_limit_type_set"] is True
+    assert env["config_manager"].save_kwargs["default_max_steps"] is None
+    assert env["config_manager"].save_kwargs["default_max_steps_set"] is True
+    assert env["config_manager"].save_kwargs["default_max_duration_seconds"] == 86400
+    assert env["config_manager"].save_kwargs["default_max_duration_seconds_set"] is True
+
+
+def test_save_config_duration_clears_steps_limit(env: dict[str, Any]) -> None:
+    response = env["client"].post(
+        "/api/config",
+        json={
+            "base_url": "http://localhost:8080/v1",
+            "model_name": "autoglm-phone-9b",
+            "run_limit_type": "duration",
+            "default_max_steps": 100,
+            "default_max_duration_seconds": 7200,
+            "layered_max_turns": 50,
+        },
+    )
+
+    assert response.status_code == 200
+    assert env["config_manager"].save_kwargs is not None
+    assert env["config_manager"].save_kwargs["run_limit_type"] == "duration"
+    assert env["config_manager"].save_kwargs["default_max_steps"] is None
+    assert env["config_manager"].save_kwargs["default_max_steps_set"] is True
+    assert env["config_manager"].save_kwargs["default_max_duration_seconds"] == 7200
+    assert env["config_manager"].save_kwargs["default_max_duration_seconds_set"] is True
+
+
+def test_save_config_unlimited_clears_all_normal_limits(env: dict[str, Any]) -> None:
+    response = env["client"].post(
+        "/api/config",
+        json={
+            "base_url": "http://localhost:8080/v1",
+            "model_name": "autoglm-phone-9b",
+            "run_limit_type": "unlimited",
+            "default_max_steps": 100,
+            "default_max_duration_seconds": 7200,
+            "layered_max_turns": 50,
+        },
+    )
+
+    assert response.status_code == 200
+    assert env["config_manager"].save_kwargs is not None
+    assert env["config_manager"].save_kwargs["run_limit_type"] == "unlimited"
+    assert env["config_manager"].save_kwargs["default_max_steps"] is None
+    assert env["config_manager"].save_kwargs["default_max_duration_seconds"] is None
+    assert env["config_manager"].save_kwargs["default_max_steps_set"] is True
+    assert env["config_manager"].save_kwargs["default_max_duration_seconds_set"] is True
+
+
+def test_save_config_duration_requires_duration(env: dict[str, Any]) -> None:
+    env["config_manager"].effective_config.default_max_duration_seconds = None
+
+    response = env["client"].post(
+        "/api/config",
+        json={
+            "base_url": "http://localhost:8080/v1",
+            "model_name": "autoglm-phone-9b",
+            "run_limit_type": "duration",
+            "default_max_steps": 100,
+            "default_max_duration_seconds": None,
+            "layered_max_turns": 50,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "default_max_duration_seconds is required" in response.json()["detail"]
+
+
+def test_save_config_partial_steps_update_still_allowed(env: dict[str, Any]) -> None:
+    response = env["client"].post(
+        "/api/config",
+        json={
+            "base_url": "http://localhost:8080/v1",
+            "model_name": "autoglm-phone-9b",
+            "default_max_steps": 180,
+            "layered_max_turns": 50,
+        },
+    )
+
+    assert response.status_code == 200
+    assert env["config_manager"].save_kwargs is not None
+    assert env["config_manager"].save_kwargs["run_limit_type"] is None
+    assert env["config_manager"].save_kwargs["default_max_steps"] == 180
+    assert env["config_manager"].save_kwargs["default_max_steps_set"] is True
+    assert (
+        env["config_manager"].save_kwargs["default_max_duration_seconds_set"] is False
+    )
 
 
 def test_chat_stream_emits_error_event_when_device_busy(env: dict[str, Any]) -> None:
@@ -477,6 +588,8 @@ def test_get_config_masks_empty_api_key_and_maps_conflicts(
     payload = response.json()
     assert payload["api_key"] == ""
     assert payload["source"] == "config file (~/.config/autoglm/config.json)"
+    assert payload["run_limit_type"] == "steps"
+    assert payload["default_max_duration_seconds"] is None
     assert payload["conflicts"] == [
         {
             "field": "base_url",
@@ -538,7 +651,7 @@ def test_save_config_returns_500_when_persist_fails(env: dict[str, Any]) -> None
     )
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "500: Failed to save config"
+    assert response.json()["detail"] == "Failed to save config"
 
 
 def test_delete_config_success_and_failure(env: dict[str, Any]) -> None:

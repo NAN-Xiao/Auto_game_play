@@ -690,7 +690,9 @@ export interface ConfigResponse {
   agent_type?: string;
   agent_config_params?: Record<string, unknown>;
   // Agent 执行配置
+  run_limit_type: 'steps' | 'duration' | 'unlimited';
   default_max_steps: number | null;
+  default_max_duration_seconds: number | null;
   layered_max_turns: number;
   // 决策模型配置
   decision_base_url?: string;
@@ -706,7 +708,9 @@ export interface ConfigSaveRequest {
   agent_type?: string;
   agent_config_params?: Record<string, unknown>;
   // Agent 执行配置
+  run_limit_type?: 'steps' | 'duration' | 'unlimited';
   default_max_steps?: number | null;
+  default_max_duration_seconds?: number | null;
   layered_max_turns?: number;
   // 决策模型配置
   decision_base_url?: string;

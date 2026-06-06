@@ -165,6 +165,12 @@ export function DeviceSidebar({
   const [qrSession, setQrSession] = useState<QRPairingSession | null>(null);
   const [isGeneratingQR, setIsGeneratingQR] = useState(false);
   const qrPollIntervalRef = useRef<number | null>(null);
+  const qrCloseTimeoutRef = useRef<number | null>(null);
+  const qrGenerationIdRef = useRef(0);
+  const mdnsScanIdRef = useRef(0);
+  const showManualConnectRef = useRef(showManualConnect);
+  const activeTabRef = useRef(activeTab);
+  const qrSessionRef = useRef<QRPairingSession | null>(qrSession);
 
   const [remoteBaseUrl, setRemoteBaseUrl] = useState('');
   const [remoteUrlError, setRemoteUrlError] = useState('');
@@ -184,6 +190,18 @@ export function DeviceSidebar({
   useEffect(() => {
     localStorage.setItem('sidebar-width', String(sidebarWidth));
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    showManualConnectRef.current = showManualConnect;
+  }, [showManualConnect]);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    qrSessionRef.current = qrSession;
+  }, [qrSession]);
 
   useEffect(() => {
     if (!isResizing) return;
@@ -283,9 +301,7 @@ export function DeviceSidebar({
       });
 
       if (result.success) {
-        setShowManualConnect(false);
-        setManualConnectIp('');
-        setManualConnectPort('5555');
+        closeManualConnectDialog({ resetForm: true });
         // Device list will auto-refresh via polling
       } else {
         setIpError(result.message || t.toasts.wifiManualConnectError);
@@ -336,14 +352,7 @@ export function DeviceSidebar({
       });
 
       if (result.success) {
-        setShowManualConnect(false);
-        // Reset form
-        setManualConnectIp('');
-        setManualConnectPort('5555');
-        setPairingCode('');
-        setPairingPort('');
-        setConnectionPort('5555');
-        setActiveTab('direct');
+        closeManualConnectDialog({ resetForm: true });
         // Device list will auto-refresh via polling
       } else {
         // Show error based on error code
@@ -370,6 +379,71 @@ export function DeviceSidebar({
     }
   }, []);
 
+  const clearQRCloseTimeout = useCallback(() => {
+    if (qrCloseTimeoutRef.current !== null) {
+      clearTimeout(qrCloseTimeoutRef.current);
+      qrCloseTimeoutRef.current = null;
+    }
+  }, []);
+
+  const resetManualConnectDialogState = useCallback(() => {
+    setIpError('');
+    setPortError('');
+    setPairingCodeError('');
+    setScanError('');
+    setManualConnectIp('');
+    setManualConnectPort('5555');
+    setPairingCode('');
+    setPairingPort('');
+    setConnectionPort('5555');
+    setActiveTab('direct');
+    setDiscoveredDevices([]);
+    setRemoteUrlError('');
+    setDiscoveredRemoteDevices([]);
+    setSelectedRemoteDevice(null);
+  }, []);
+
+  const cancelCurrentQRPairing = useCallback(() => {
+    const currentSession = qrSessionRef.current;
+    if (currentSession && currentSession.status === 'listening') {
+      cancelQRPairing(currentSession.sessionId).catch(error => {
+        console.error('[QR Pairing] Cancel failed:', error);
+      });
+    }
+  }, []);
+
+  const openManualConnectDialog = useCallback(() => {
+    showManualConnectRef.current = true;
+    setShowManualConnect(true);
+  }, []);
+
+  const closeManualConnectDialog = useCallback(
+    ({ resetForm = false }: { resetForm?: boolean } = {}) => {
+      showManualConnectRef.current = false;
+      qrGenerationIdRef.current += 1;
+      mdnsScanIdRef.current += 1;
+      stopQRStatusPolling();
+      clearQRCloseTimeout();
+      cancelCurrentQRPairing();
+      setShowManualConnect(false);
+      setQrSession(null);
+      setIsGeneratingQR(false);
+      setIsScanning(false);
+      setIsDiscoveringRemote(false);
+
+      if (resetForm) {
+        resetManualConnectDialogState();
+      }
+    },
+    [
+      cancelCurrentQRPairing,
+      clearQRCloseTimeout,
+      resetManualConnectDialogState,
+      setIsScanning,
+      stopQRStatusPolling,
+    ]
+  );
+
   const startQRStatusPolling = useCallback(
     (sessionId: string) => {
       stopQRStatusPolling();
@@ -377,6 +451,13 @@ export function DeviceSidebar({
       qrPollIntervalRef.current = window.setInterval(async () => {
         try {
           const status = await getQRPairingStatus(sessionId);
+
+          if (
+            !showManualConnectRef.current ||
+            activeTabRef.current !== 'pair'
+          ) {
+            return;
+          }
 
           setQrSession(prev =>
             prev
@@ -393,9 +474,15 @@ export function DeviceSidebar({
 
             if (status.status === 'connected') {
               // Success - close dialog after 2 seconds
-              setTimeout(() => {
-                setShowManualConnect(false);
-                setQrSession(null);
+              clearQRCloseTimeout();
+              qrCloseTimeoutRef.current = window.setTimeout(() => {
+                if (
+                  showManualConnectRef.current &&
+                  activeTabRef.current === 'pair'
+                ) {
+                  closeManualConnectDialog({ resetForm: true });
+                }
+                qrCloseTimeoutRef.current = null;
               }, 2000);
             }
           }
@@ -404,14 +491,23 @@ export function DeviceSidebar({
         }
       }, 1000);
     },
-    [stopQRStatusPolling]
+    [clearQRCloseTimeout, closeManualConnectDialog, stopQRStatusPolling]
   );
 
   const handleGenerateQRCode = useCallback(async () => {
+    const generationId = ++qrGenerationIdRef.current;
     setIsGeneratingQR(true);
 
     try {
       const result = await generateQRPairing();
+
+      if (
+        generationId !== qrGenerationIdRef.current ||
+        !showManualConnectRef.current ||
+        activeTabRef.current !== 'pair'
+      ) {
+        return;
+      }
 
       if (result.success && result.qr_payload && result.session_id) {
         setQrSession({
@@ -426,7 +522,9 @@ export function DeviceSidebar({
     } catch (error) {
       console.error('[QR Pairing] Generation failed:', error);
     } finally {
-      setIsGeneratingQR(false);
+      if (generationId === qrGenerationIdRef.current) {
+        setIsGeneratingQR(false);
+      }
     }
   }, [startQRStatusPolling]);
 
@@ -436,6 +534,7 @@ export function DeviceSidebar({
     try {
       await cancelQRPairing(qrSession.sessionId);
       setQrSession(null);
+      qrSessionRef.current = null;
       stopQRStatusPolling();
     } catch (error) {
       console.error('[QR Pairing] Cancel failed:', error);
@@ -499,7 +598,7 @@ export function DeviceSidebar({
       });
 
       if (result.success) {
-        setShowManualConnect(false);
+        closeManualConnectDialog({ resetForm: true });
         setRemoteBaseUrl('');
         setDiscoveredRemoteDevices([]);
         setSelectedRemoteDevice(null);
@@ -516,27 +615,37 @@ export function DeviceSidebar({
   // Cleanup QR session when dialog closes or tab changes
   useEffect(() => {
     if (!showManualConnect || activeTab !== 'pair') {
+      let cancelled = false;
       queueMicrotask(() => {
-        if (qrSession && qrSession.status === 'listening') {
-          handleCancelQRPairing();
-        }
+        if (cancelled) return;
+
+        cancelCurrentQRPairing();
         stopQRStatusPolling();
+        clearQRCloseTimeout();
+        qrGenerationIdRef.current += 1;
+        setQrSession(null);
+        setIsGeneratingQR(false);
       });
+
+      return () => {
+        cancelled = true;
+      };
     }
   }, [
     showManualConnect,
     activeTab,
-    qrSession,
+    cancelCurrentQRPairing,
+    clearQRCloseTimeout,
     stopQRStatusPolling,
-    handleCancelQRPairing,
   ]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopQRStatusPolling();
+      clearQRCloseTimeout();
     };
-  }, [stopQRStatusPolling]);
+  }, [clearQRCloseTimeout, stopQRStatusPolling]);
 
   // Auto-generate QR code when switching to pair tab
   useEffect(() => {
@@ -546,9 +655,15 @@ export function DeviceSidebar({
       !qrSession &&
       !isGeneratingQR
     ) {
+      let cancelled = false;
       queueMicrotask(() => {
+        if (cancelled) return;
         handleGenerateQRCode();
       });
+
+      return () => {
+        cancelled = true;
+      };
     }
   }, [
     showManualConnect,
@@ -560,11 +675,16 @@ export function DeviceSidebar({
 
   // mDNS device discovery handler
   const handleDiscover = useCallback(async () => {
+    const scanId = ++mdnsScanIdRef.current;
     setIsScanning(true);
     setScanError('');
 
     try {
       const result = await discoverMdnsDevices();
+
+      if (scanId !== mdnsScanIdRef.current || !showManualConnectRef.current) {
+        return;
+      }
 
       if (result.success) {
         setDiscoveredDevices(result.devices);
@@ -576,10 +696,16 @@ export function DeviceSidebar({
         setDiscoveredDevices([]);
       }
     } catch (error) {
+      if (scanId !== mdnsScanIdRef.current || !showManualConnectRef.current) {
+        return;
+      }
+
       setScanError(t.deviceSidebar.scanError.replace('{error}', String(error)));
       setDiscoveredDevices([]);
     } finally {
-      setIsScanning(false);
+      if (scanId === mdnsScanIdRef.current) {
+        setIsScanning(false);
+      }
     }
   }, [t.deviceSidebar.scanError, setIsScanning]);
 
@@ -600,7 +726,7 @@ export function DeviceSidebar({
         });
 
         if (result.success) {
-          setShowManualConnect(false);
+          closeManualConnectDialog({ resetForm: true });
           // Device list will auto-refresh via polling
         } else {
           setIpError(result.message || t.toasts.wifiManualConnectError);
@@ -745,7 +871,7 @@ export function DeviceSidebar({
         <div className="p-3 space-y-2">
           <Button
             variant="outline"
-            onClick={() => setShowManualConnect(true)}
+            onClick={openManualConnectDialog}
             className="w-full justify-start gap-2 rounded-full border-slate-200 dark:border-slate-700"
           >
             <Plus className="h-4 w-4" />
@@ -772,7 +898,16 @@ export function DeviceSidebar({
         </div>
 
         {/* Manual WiFi Connect Dialog */}
-        <Dialog open={showManualConnect} onOpenChange={setShowManualConnect}>
+        <Dialog
+          open={showManualConnect}
+          onOpenChange={open => {
+            if (open) {
+              openManualConnectDialog();
+            } else {
+              closeManualConnectDialog();
+            }
+          }}
+        >
           <DialogContent className="sm:max-w-md max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{t.deviceSidebar.manualConnectTitle}</DialogTitle>
@@ -1171,7 +1306,9 @@ export function DeviceSidebar({
                           )}
                           {qrSession.status === 'connected' && (
                             <Button
-                              onClick={() => setShowManualConnect(false)}
+                              onClick={() =>
+                                closeManualConnectDialog({ resetForm: true })
+                              }
                               className="flex-1"
                             >
                               {t.common.confirm}
@@ -1385,18 +1522,7 @@ export function DeviceSidebar({
               <Button
                 variant="outline"
                 onClick={() => {
-                  setShowManualConnect(false);
-                  setIpError('');
-                  setPortError('');
-                  setPairingCodeError('');
-                  setScanError('');
-                  setManualConnectIp('');
-                  setManualConnectPort('5555');
-                  setPairingCode('');
-                  setPairingPort('');
-                  setConnectionPort('5555');
-                  setActiveTab('direct');
-                  setDiscoveredDevices([]);
+                  closeManualConnectDialog({ resetForm: true });
                 }}
               >
                 {t.common.cancel}

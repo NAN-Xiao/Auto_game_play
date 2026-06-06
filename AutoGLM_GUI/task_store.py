@@ -359,6 +359,89 @@ class TaskStore:
                 self._conn.commit()
                 return event
 
+    def _find_event_by_payload_fields_locked(
+        self,
+        *,
+        task_id: str,
+        event_type: str,
+        payload_fields: dict[str, Any],
+    ) -> TaskEventRecord | None:
+        rows = self._fetchall(
+            """
+            SELECT task_id, seq, event_type, role, payload_json, created_at
+            FROM task_events
+            WHERE task_id = ? AND event_type = ?
+            ORDER BY seq ASC
+            """,
+            (task_id, event_type),
+        )
+        for row in rows:
+            event = self._row_to_event(row)
+            if event is None:
+                continue
+            payload = dict(event.get("payload") or {})
+            if all(payload.get(key) == value for key, value in payload_fields.items()):
+                return event
+        return None
+
+    def find_event_by_payload_fields(
+        self,
+        *,
+        task_id: str,
+        event_type: str,
+        payload_fields: dict[str, Any],
+    ) -> TaskEventRecord | None:
+        self._ensure_ready()
+        with self._lock:
+            return self._find_event_by_payload_fields_locked(
+                task_id=task_id,
+                event_type=event_type,
+                payload_fields=payload_fields,
+            )
+
+    def append_event_if_missing_by_payload_fields(
+        self,
+        *,
+        task_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        payload_fields: dict[str, Any],
+        role: str = "assistant",
+    ) -> tuple[TaskEventRecord, bool]:
+        self._ensure_ready()
+        with trace_span(
+            "task_store.event.append_if_missing",
+            attrs={
+                "task_id": task_id,
+                "event_type": event_type,
+                "role": role,
+                "match_payload_keys": sorted(payload_fields.keys()),
+                "payload_keys": sorted(payload.keys()),
+            },
+        ) as span:
+            with self._lock:
+                assert self._conn is not None
+                existing = self._find_event_by_payload_fields_locked(
+                    task_id=task_id,
+                    event_type=event_type,
+                    payload_fields=payload_fields,
+                )
+                if existing is not None:
+                    span.set_attribute("created", False)
+                    span.set_attribute("seq", existing.get("seq"))
+                    return existing, False
+
+                event = self._append_event_locked(
+                    task_id=task_id,
+                    event_type=event_type,
+                    role=role,
+                    payload=payload,
+                )
+                span.set_attribute("created", True)
+                span.set_attribute("seq", event.get("seq"))
+                self._conn.commit()
+                return event, True
+
     def create_task_run(
         self,
         *,
@@ -834,6 +917,32 @@ class TaskStore:
                         session_id,
                         TaskStatus.QUEUED.value,
                         TaskStatus.RUNNING.value,
+                    ),
+                )
+            )
+
+    def get_latest_reportable_session_task(self, session_id: str) -> TaskRecord | None:
+        self._ensure_ready()
+        with self._lock:
+            return self._row_to_task(
+                self._fetchone(
+                    """
+                    SELECT *
+                    FROM task_runs
+                    WHERE session_id = ?
+                      AND source = 'chat'
+                      AND executor_key IN ('classic_chat', 'layered_chat')
+                      AND status IN (?, ?, ?, ?)
+                      AND step_count > 0
+                    ORDER BY finished_at DESC, created_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (
+                        session_id,
+                        TaskStatus.SUCCEEDED.value,
+                        TaskStatus.FAILED.value,
+                        TaskStatus.CANCELLED.value,
+                        TaskStatus.INTERRUPTED.value,
                     ),
                 )
             )

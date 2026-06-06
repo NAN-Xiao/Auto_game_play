@@ -23,6 +23,7 @@ import AutoGLM_GUI.trace as trace_module
 
 TaskExecutor = Callable[[TaskRecord], Awaitable[None]]
 TaskImageAttachment = dict[str, Any]
+EXPERIENCE_SUMMARY_MAX_CONCURRENCY = 1
 
 
 class TaskManager:
@@ -37,11 +38,16 @@ class TaskManager:
         self._completion_events: dict[str, asyncio.Event] = {}
         self._cancel_requested: set[str] = set()
         self._executors: dict[str, TaskExecutor] = {}
+        self._experience_summary_tasks: dict[str, asyncio.Task[None]] = {}
+        self._experience_summary_rerun_requested: set[str] = set()
+        self._experience_summary_include_partial: set[str] = set()
+        self._experience_summary_semaphore: asyncio.Semaphore | None = None
         self._started = False
         self._takeover_sessions: dict[str, bool] = {}
         self._shutdown = False
         self.register_executor("classic_chat", self._execute_classic_chat)
         self.register_executor("layered_chat", self._execute_layered_chat)
+        self.register_executor("experience_report", self._execute_experience_report)
         self.register_executor("scheduled_workflow", self._execute_scheduled_workflow)
         self.register_executor(
             "scheduled_layered_workflow", self._execute_scheduled_layered_workflow
@@ -69,6 +75,14 @@ class TaskManager:
             worker.cancel()
         if workers:
             await asyncio.gather(*workers, return_exceptions=True)
+        summary_tasks = list(self._experience_summary_tasks.values())
+        self._experience_summary_tasks.clear()
+        self._experience_summary_rerun_requested.clear()
+        self._experience_summary_include_partial.clear()
+        for summary_task in summary_tasks:
+            summary_task.cancel()
+        if summary_tasks:
+            await asyncio.gather(*summary_tasks, return_exceptions=True)
         self._started = False
 
     async def create_chat_session(
@@ -144,6 +158,15 @@ class TaskManager:
         if executor_key is None:
             raise ValueError(f"Unsupported session mode: {session_mode}")
 
+        source_task: TaskRecord | None = None
+        if self._looks_like_report_request(message.strip().lower()):
+            source_task = await asyncio.to_thread(
+                self.store.get_latest_reportable_session_task,
+                session_id,
+            )
+            if source_task is not None:
+                executor_key = "experience_report"
+
         task = await asyncio.to_thread(
             self.store.create_task_run,
             source="chat",
@@ -163,9 +186,99 @@ class TaskManager:
                 "attachments": attachments or [],
             },
         )
+        if source_task is not None:
+            await asyncio.to_thread(
+                self.store.append_event,
+                task_id=task["id"],
+                event_type="experience_report_source",
+                role="system",
+                payload={
+                    "source_task_id": str(source_task["id"]),
+                    "source_stop_reason": source_task.get("stop_reason"),
+                    "source_step_count": int(source_task.get("step_count") or 0),
+                    "message": "Using retained app experience as report context",
+                },
+            )
         self._completion_events[task["id"]] = asyncio.Event()
         self._ensure_worker(device_id)
         return task
+
+    @staticmethod
+    def _looks_like_report_request(message: str) -> bool:
+        positive_keywords = (
+            "报告",
+            "汇报",
+            "总结",
+            "汇总",
+            "复盘",
+            "评测",
+            "评价",
+            "分析",
+            "输出",
+            "格式",
+            "按以下",
+            "按照",
+            "生成",
+            "整理",
+            "report",
+            "summary",
+            "summarize",
+            "review",
+            "evaluate",
+            "evaluation",
+            "format",
+            "analysis",
+        )
+        operation_keywords = (
+            "点击",
+            "打开",
+            "进入",
+            "返回",
+            "滑动",
+            "输入",
+            "搜索",
+            "切换",
+            "关闭",
+            "安装",
+            "卸载",
+            "登录",
+            "tap",
+            "click",
+            "open",
+            "swipe",
+            "scroll",
+            "type",
+            "input",
+            "search",
+        )
+        generation_keywords = (
+            "输出",
+            "生成",
+            "总结",
+            "汇总",
+            "整理",
+            "格式",
+            "按以下",
+            "按照",
+            "复盘",
+            "generate",
+            "summarize",
+            "summary",
+            "format",
+            "analysis",
+            "evaluate",
+            "evaluation",
+            "review",
+        )
+        has_positive = any(keyword in message for keyword in positive_keywords)
+        if not has_positive:
+            return False
+        has_operation = any(keyword in message for keyword in operation_keywords)
+        if has_operation and not any(
+            keyword in message for keyword in generation_keywords
+        ):
+            return False
+        return True
 
     def _get_task_user_image_attachments(
         self, task_id: str
@@ -552,6 +665,7 @@ class TaskManager:
                     ):
                         event_type = event["type"]
                         event_data = dict(event.get("data", {}))
+                        previous_step_count = step_count
 
                         if event_type == "step":
                             step_count = max(step_count, int(event_data.get("step", 0)))
@@ -571,6 +685,12 @@ class TaskManager:
                             replay_source="classic_chat",
                             task=task,
                         )
+                        if event_type == "step":
+                            self._schedule_experience_summary_for_progress(
+                                task=task,
+                                previous_step_count=previous_step_count,
+                                current_step_count=step_count,
+                            )
 
                     if event_type == "takeover":
                         final_message = str(event_data.get("message", ""))
@@ -625,6 +745,14 @@ class TaskManager:
                 final_message = "Task cancelled by user"
                 final_status = TaskStatus.CANCELLED.value
                 stop_reason = "user_stopped"
+                await self._append_experience_retained_event(
+                    task=task,
+                    final_status=final_status,
+                    stop_reason=stop_reason,
+                    step_count=step_count,
+                    trace_id=trace_id,
+                    replay_source="classic_chat",
+                )
                 await self._finalize_traced_task(
                     task_id=task_id,
                     trace_id=trace_id,
@@ -664,6 +792,15 @@ class TaskManager:
                 manager.set_error_state(device_id, final_message, context=context)
             if acquired:
                 manager.release_device(device_id, context=context)
+
+        await self._append_experience_retained_event(
+            task=task,
+            final_status=final_status,
+            stop_reason=stop_reason,
+            step_count=step_count,
+            trace_id=trace_id,
+            replay_source="classic_chat",
+        )
 
         await self._finalize_traced_task(
             task_id=task_id,
@@ -736,9 +873,15 @@ class TaskManager:
                     )
 
                     if event_type == "tool_result":
+                        previous_step_count = step_count
                         sub_steps = event_payload.get("steps", 0)
                         if isinstance(sub_steps, (int, float)):
                             step_count += int(sub_steps)
+                        self._schedule_experience_summary_for_progress(
+                            task=task,
+                            previous_step_count=previous_step_count,
+                            current_step_count=step_count,
+                        )
                     elif event_type == "done":
                         final_message = str(event_payload.get("content", ""))
                         final_status = (
@@ -801,6 +944,15 @@ class TaskManager:
             if clear_session_after_run:
                 reset_layered_session(session_id)
 
+        await self._append_experience_retained_event(
+            task=task,
+            final_status=final_status,
+            stop_reason=stop_reason,
+            step_count=step_count,
+            trace_id=trace_id,
+            replay_source=metrics_source,
+        )
+
         await self._finalize_traced_task(
             task_id=task_id,
             trace_id=trace_id,
@@ -811,6 +963,301 @@ class TaskManager:
             metrics_source=metrics_source,
             start_perf=start_perf,
         )
+
+    async def _execute_experience_report(self, task: TaskRecord) -> None:
+        from AutoGLM_GUI.experience_report import (
+            build_experience_report_context,
+            generate_experience_report,
+        )
+
+        task_id = str(task["id"])
+        session_id = str(task["session_id"] or "")
+        trace_id = trace_module.create_trace_id()
+        start_perf = time.perf_counter()
+        final_status = TaskStatus.FAILED.value
+        final_message = ""
+        stop_reason = "error"
+
+        try:
+            with trace_module.trace_context(trace_id):
+                await asyncio.to_thread(self.store.set_task_trace_id, task_id, trace_id)
+                await self._write_replay_task_start(
+                    task=task,
+                    trace_id=trace_id,
+                    source="experience_report",
+                )
+                if task_id in self._cancel_requested:
+                    final_message = "Task cancelled by user"
+                    final_status = TaskStatus.CANCELLED.value
+                    stop_reason = "user_stopped"
+                else:
+                    source_task = await asyncio.to_thread(
+                        self._get_experience_report_source_task,
+                        task_id,
+                        session_id,
+                    )
+                    if source_task is None:
+                        final_message = (
+                            "No retained app experience found. Run an experience first, "
+                            "then stop and enter the report format."
+                        )
+                        final_status = TaskStatus.FAILED.value
+                        stop_reason = "report_context_missing"
+                    else:
+                        summaries = await self._ensure_experience_summaries_ready(
+                            source_task,
+                            report_task=task,
+                            trace_id=trace_id,
+                        )
+                        context = await asyncio.to_thread(
+                            build_experience_report_context,
+                            store=self.store,
+                            source_task=source_task,
+                        )
+                        await self._append_task_event(
+                            task_id=task_id,
+                            event_type="experience_report_context",
+                            payload={
+                                "source_task_id": str(source_task["id"]),
+                                "source_status": source_task.get("status"),
+                                "source_stop_reason": source_task.get("stop_reason"),
+                                "source_step_count": int(
+                                    source_task.get("step_count") or 0
+                                ),
+                                "segment_summary_count": len(summaries),
+                                "context_chars": len(context.text),
+                            },
+                            role="system",
+                            trace_id=trace_id,
+                            replay_source="experience_report",
+                            task=task,
+                        )
+                        report = await generate_experience_report(
+                            report_request=str(task["input_text"]),
+                            context=context,
+                        )
+                        if not report:
+                            report = "Report generation returned an empty response."
+                        await self._append_task_event(
+                            task_id=task_id,
+                            event_type="message",
+                            payload={"content": report},
+                            role="assistant",
+                            trace_id=trace_id,
+                            replay_source="experience_report",
+                            task=task,
+                        )
+                        final_message = report
+                        final_status = TaskStatus.SUCCEEDED.value
+                        stop_reason = "report_generated"
+        except asyncio.CancelledError:
+            if task_id in self._cancel_requested:
+                final_message = "Task cancelled by user"
+                final_status = TaskStatus.CANCELLED.value
+                stop_reason = "user_stopped"
+            else:
+                raise
+        except Exception as exc:
+            if task_id in self._cancel_requested:
+                final_message = "Task cancelled by user"
+                final_status = TaskStatus.CANCELLED.value
+                stop_reason = "user_stopped"
+            else:
+                final_message = str(exc)
+                final_status = TaskStatus.FAILED.value
+                stop_reason = "error"
+        finally:
+            self._cancel_requested.discard(task_id)
+
+        await self._finalize_traced_task(
+            task_id=task_id,
+            trace_id=trace_id,
+            status=final_status,
+            final_message=final_message,
+            stop_reason=stop_reason,
+            step_count=0,
+            metrics_source="experience_report",
+            start_perf=start_perf,
+        )
+
+    def _get_experience_report_source_task(
+        self, task_id: str, session_id: str
+    ) -> TaskRecord | None:
+        events = self.store.list_task_events(task_id)
+        for event in events:
+            if event["event_type"] != "experience_report_source":
+                continue
+            payload = dict(event.get("payload") or {})
+            source_task_id = payload.get("source_task_id")
+            if isinstance(source_task_id, str) and source_task_id:
+                return self.store.get_task(source_task_id)
+        if not session_id:
+            return None
+        return self.store.get_latest_reportable_session_task(session_id)
+
+    async def _append_experience_retained_event(
+        self,
+        *,
+        task: TaskRecord,
+        final_status: str,
+        stop_reason: str,
+        step_count: int,
+        trace_id: str | None,
+        replay_source: str,
+    ) -> None:
+        if task.get("source") != "chat":
+            return
+        if task.get("executor_key") not in {"classic_chat", "layered_chat"}:
+            return
+        if not task.get("session_id"):
+            return
+        if step_count <= 0:
+            return
+        if final_status not in {status.value for status in TERMINAL_TASK_STATUSES}:
+            return
+        await self._append_task_event(
+            task_id=str(task["id"]),
+            event_type="experience_retained",
+            payload={
+                "message": (
+                    "This app experience has been retained. Continue in chat with "
+                    "the report format, focus areas, and required structure."
+                ),
+                "source_task_id": str(task["id"]),
+                "stop_reason": stop_reason,
+                "step_count": step_count,
+            },
+            role="system",
+            trace_id=trace_id,
+            replay_source=replay_source if trace_id else None,
+            task=task,
+        )
+        self._schedule_experience_summary_update(
+            task=task,
+            include_partial_segment=True,
+        )
+
+    def _schedule_experience_summary_for_progress(
+        self,
+        *,
+        task: TaskRecord,
+        previous_step_count: int,
+        current_step_count: int,
+    ) -> None:
+        if current_step_count <= previous_step_count:
+            return
+        from AutoGLM_GUI.experience_report import DEFAULT_SEGMENT_STEP_SIZE
+
+        if (
+            current_step_count // DEFAULT_SEGMENT_STEP_SIZE
+            <= previous_step_count // DEFAULT_SEGMENT_STEP_SIZE
+        ):
+            return
+        self._schedule_experience_summary_update(
+            task=task,
+            include_partial_segment=False,
+        )
+
+    def _schedule_experience_summary_update(
+        self,
+        *,
+        task: TaskRecord,
+        include_partial_segment: bool,
+    ) -> None:
+        task_id = str(task["id"])
+        if task.get("source") != "chat":
+            return
+        if task.get("executor_key") not in {"classic_chat", "layered_chat"}:
+            return
+        if include_partial_segment:
+            self._experience_summary_include_partial.add(task_id)
+
+        existing = self._experience_summary_tasks.get(task_id)
+        if existing is not None and not existing.done():
+            self._experience_summary_rerun_requested.add(task_id)
+            return
+
+        summary_task = asyncio.create_task(
+            self._run_experience_summary_worker(task),
+            name=f"experience-summary-{task_id}",
+        )
+        self._experience_summary_tasks[task_id] = summary_task
+
+    def _get_experience_summary_semaphore(self) -> asyncio.Semaphore:
+        if self._experience_summary_semaphore is None:
+            self._experience_summary_semaphore = asyncio.Semaphore(
+                EXPERIENCE_SUMMARY_MAX_CONCURRENCY
+            )
+        return self._experience_summary_semaphore
+
+    async def _run_experience_summary_worker(self, task: TaskRecord) -> None:
+        from AutoGLM_GUI.experience_report import ensure_experience_segment_summaries
+
+        task_id = str(task["id"])
+        try:
+            while True:
+                include_partial_segment = (
+                    task_id in self._experience_summary_include_partial
+                )
+                self._experience_summary_include_partial.discard(task_id)
+                try:
+                    async with self._get_experience_summary_semaphore():
+                        await ensure_experience_segment_summaries(
+                            store=self.store,
+                            source_task=task,
+                            include_partial_segment=include_partial_segment,
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "Experience segment summary failed for task %s",
+                        task_id,
+                        exc_info=True,
+                    )
+
+                if task_id not in self._experience_summary_rerun_requested:
+                    break
+                self._experience_summary_rerun_requested.discard(task_id)
+        finally:
+            current = asyncio.current_task()
+            if self._experience_summary_tasks.get(task_id) is current:
+                self._experience_summary_tasks.pop(task_id, None)
+            self._experience_summary_rerun_requested.discard(task_id)
+            self._experience_summary_include_partial.discard(task_id)
+
+    async def _ensure_experience_summaries_ready(
+        self,
+        source_task: TaskRecord,
+        *,
+        report_task: TaskRecord | None = None,
+        trace_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        from AutoGLM_GUI.experience_report import ensure_experience_segment_summaries
+
+        task_id = str(source_task["id"])
+        running_summary = self._experience_summary_tasks.get(task_id)
+        if running_summary is not None and not running_summary.done():
+            if report_task is not None:
+                await self._append_task_event(
+                    task_id=str(report_task["id"]),
+                    event_type="message",
+                    payload={"content": "正在整理体验记忆并生成报告..."},
+                    role="assistant",
+                    trace_id=trace_id,
+                    replay_source="experience_report" if trace_id else None,
+                    task=report_task,
+                )
+            self._experience_summary_include_partial.add(task_id)
+            self._experience_summary_rerun_requested.add(task_id)
+            await running_summary
+
+        async with self._get_experience_summary_semaphore():
+            return await ensure_experience_segment_summaries(
+                store=self.store,
+                source_task=source_task,
+                include_partial_segment=True,
+            )
 
     async def _execute_scheduled_layered_workflow(self, task: TaskRecord) -> None:
         await self._execute_layered_task(

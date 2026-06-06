@@ -34,6 +34,8 @@ from AutoGLM_GUI.task_store import (
 
 router = APIRouter()
 
+_INTERNAL_TASK_EVENT_TYPES = {"experience_segment_summary"}
+
 
 def _task_run_response(record: TaskRecord) -> TaskRunResponse:
     started_at = record.get("started_at")
@@ -115,6 +117,10 @@ def _task_event_response(record: TaskEventRecord) -> TaskEventResponse:
         payload=dict(record["payload"]),
         created_at=str(record["created_at"]),
     )
+
+
+def _is_public_task_event(record: TaskEventRecord) -> bool:
+    return str(record["event_type"]) not in _INTERNAL_TASK_EVENT_TYPES
 
 
 @router.post("/api/task-sessions", response_model=TaskSessionResponse)
@@ -273,7 +279,11 @@ async def get_task_events(
         after_seq=after_seq,
     )
     return TaskEventListResponse(
-        events=[_task_event_response(event) for event in events]
+        events=[
+            _task_event_response(event)
+            for event in events
+            if _is_public_task_event(event)
+        ]
     )
 
 
@@ -296,6 +306,8 @@ async def stream_task_events(
             )
             for event in events:
                 last_seq = max(last_seq, int(event["seq"]))
+                if not _is_public_task_event(event):
+                    continue
                 response = _task_event_response(event)
                 payload = response.model_dump()
                 yield f"event: {response.event_type}\n"

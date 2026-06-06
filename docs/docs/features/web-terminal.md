@@ -38,7 +38,7 @@ uv run autoglm-gui --base-url http://localhost:8080/v1 --reload
 
 ```bash
 cd frontend
-pnpm dev
+npm run dev
 ```
 
 ## 基本使用

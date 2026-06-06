@@ -208,8 +208,12 @@ def test_unified_config_manager_layers_conflicts_and_file_io(
         "file-model",
         api_key="file-key",
         agent_type="glm",
+        run_limit_type="duration",
         default_max_steps=None,
+        default_max_duration_seconds=60,
+        run_limit_type_set=True,
         default_max_steps_set=True,
+        default_max_duration_seconds_set=True,
         layered_max_turns=None,
         layered_max_turns_set=True,
         decision_base_url="https://decision.test/v1",
@@ -223,7 +227,9 @@ def test_unified_config_manager_layers_conflicts_and_file_io(
     monkeypatch.setenv("AUTOGLM_BASE_URL", "https://env.test/v1")
     monkeypatch.setenv("AUTOGLM_MODEL_NAME", "env-model")
     monkeypatch.setenv("AUTOGLM_API_KEY", "env-key")
+    monkeypatch.setenv("AUTOGLM_RUN_LIMIT_TYPE", "steps")
     monkeypatch.setenv("AUTOGLM_DEFAULT_MAX_STEPS", "25")
+    monkeypatch.setenv("AUTOGLM_DEFAULT_MAX_DURATION_SECONDS", "120")
     monkeypatch.setenv("AUTOGLM_LAYERED_MAX_TURNS", "5")
     monkeypatch.setenv("AUTOGLM_DECISION_BASE_URL", "https://env-decision.test/v1")
     monkeypatch.setenv("AUTOGLM_DECISION_MODEL_NAME", "env-decision")
@@ -239,7 +245,9 @@ def test_unified_config_manager_layers_conflicts_and_file_io(
     effective = manager.get_effective_config()
     assert effective.base_url == "https://cli.test/v1"
     assert effective.model_name == "cli-model"
+    assert effective.run_limit_type == "steps"
     assert effective.default_max_steps == 25
+    assert effective.default_max_duration_seconds == 120
     conflicts = manager.detect_conflicts()
     assert {conflict.field for conflict in conflicts} == {
         "base_url",

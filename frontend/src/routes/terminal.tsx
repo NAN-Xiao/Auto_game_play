@@ -44,6 +44,7 @@ export function TerminalRouteComponent() {
   const webSocketRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const sessionTokenRef = useRef<string | null>(null);
+  const isMountedRef = useRef(true);
 
   const [isTerminalReady, setIsTerminalReady] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -87,11 +88,14 @@ export function TerminalRouteComponent() {
     try {
       setIsRefreshingDevices(true);
       const nextDevices = await getDevices();
+      if (!isMountedRef.current) return;
       setDevices(nextDevices);
     } catch (loadError) {
       console.error('Failed to load devices:', loadError);
     } finally {
-      setIsRefreshingDevices(false);
+      if (isMountedRef.current) {
+        setIsRefreshingDevices(false);
+      }
     }
   }, []);
 
@@ -107,7 +111,7 @@ export function TerminalRouteComponent() {
     if (!currentSessionId || !currentSessionToken) {
       sessionIdRef.current = null;
       sessionTokenRef.current = null;
-      if (clearState) {
+      if (clearState && isMountedRef.current) {
         setSocketConnected(false);
         setSession(null);
       }
@@ -121,7 +125,7 @@ export function TerminalRouteComponent() {
     } catch (closeError) {
       console.error('Failed to close terminal session:', closeError);
     } finally {
-      if (clearState) {
+      if (clearState && isMountedRef.current) {
         setSocketConnected(false);
         setSession(null);
       }
@@ -136,12 +140,14 @@ export function TerminalRouteComponent() {
       webSocketRef.current = socket;
 
       socket.onopen = () => {
+        if (!isMountedRef.current || webSocketRef.current !== socket) return;
         setSocketConnected(true);
         sendResize();
         terminalRef.current?.focus();
       };
 
       socket.onmessage = event => {
+        if (!isMountedRef.current || webSocketRef.current !== socket) return;
         const payload = JSON.parse(event.data) as {
           type: string;
           data?: string;
@@ -188,11 +194,13 @@ export function TerminalRouteComponent() {
       };
 
       socket.onerror = () => {
+        if (!isMountedRef.current || webSocketRef.current !== socket) return;
         setError(t.terminal.websocketFailed);
         appendSystemMessage(t.terminal.websocketFailed);
       };
 
       socket.onclose = () => {
+        if (!isMountedRef.current || webSocketRef.current !== socket) return;
         setSocketConnected(false);
       };
     },
@@ -215,6 +223,7 @@ export function TerminalRouteComponent() {
 
     try {
       const nextSession = await createTerminalSession();
+      if (!isMountedRef.current) return;
       sessionIdRef.current = nextSession.session_id;
       sessionTokenRef.current = nextSession.session_token;
       setSession(nextSession);
@@ -225,12 +234,15 @@ export function TerminalRouteComponent() {
         createError instanceof Error
           ? createError.message
           : t.terminal.createFailed;
+      if (!isMountedRef.current) return;
       setError(message);
       appendSystemMessage(message);
       sessionTokenRef.current = null;
       setSession(null);
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [
     appendSystemMessage,
@@ -255,6 +267,7 @@ export function TerminalRouteComponent() {
   );
 
   useEffect(() => {
+    isMountedRef.current = true;
     const terminalContainer = terminalContainerRef.current;
     if (!terminalContainer) {
       return undefined;
@@ -312,6 +325,7 @@ export function TerminalRouteComponent() {
     });
 
     const resizeObserver = new ResizeObserver(() => {
+      if (!isMountedRef.current) return;
       fitAddon.fit();
       sendResize();
     });
@@ -323,11 +337,21 @@ export function TerminalRouteComponent() {
     setIsTerminalReady(true);
 
     return () => {
+      isMountedRef.current = false;
       setIsTerminalReady(false);
       resizeObserver.disconnect();
+      if (webSocketRef.current) {
+        webSocketRef.current.close();
+        webSocketRef.current = null;
+      }
       onDataDisposable.dispose();
       onResizeDisposable.dispose();
-      terminal.dispose();
+      try {
+        terminal.dispose();
+      } catch (disposeError) {
+        console.warn('[Terminal] Failed to dispose xterm:', disposeError);
+      }
+      terminalContainer.replaceChildren();
       resizeObserverRef.current = null;
       fitAddonRef.current = null;
       terminalRef.current = null;

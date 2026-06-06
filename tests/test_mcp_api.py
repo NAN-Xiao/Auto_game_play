@@ -174,3 +174,66 @@ def test_mcp_screenshot_handles_device_not_available_error(
         "is_sensitive": False,
         "error": "device temporarily offline",
     }
+
+
+def test_mcp_chat_temporarily_uses_step_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeAgentConfig:
+        max_steps = None
+        run_limit_type = "duration"
+        max_duration_seconds = 86400
+        system_prompt = "original"
+
+    class _FakeAgent:
+        def __init__(self) -> None:
+            self.agent_config = _FakeAgentConfig()
+            self.step_count = 1
+            self.seen_run_limit_type: str | None = None
+            self.seen_max_steps: int | None = None
+
+        def reset(self) -> None:
+            pass
+
+        async def run(self, message: str) -> str:
+            _ = message
+            self.seen_run_limit_type = self.agent_config.run_limit_type
+            self.seen_max_steps = self.agent_config.max_steps
+            return "ok"
+
+    class _FakePhoneAgentManager:
+        def __init__(self) -> None:
+            self.agent = _FakeAgent()
+            self.released: list[str] = []
+
+        async def acquire_device_async(self, *args, **kwargs) -> bool:
+            _ = (args, kwargs)
+            return True
+
+        def get_agent_with_context(self, *args, **kwargs) -> _FakeAgent:
+            _ = (args, kwargs)
+            return self.agent
+
+        def release_device(self, device_id: str, **kwargs) -> None:
+            _ = kwargs
+            self.released.append(device_id)
+
+    manager = _FakePhoneAgentManager()
+
+    import AutoGLM_GUI.phone_agent_manager as pam_mod
+
+    monkeypatch.setattr(
+        pam_mod.PhoneAgentManager,
+        "get_instance",
+        staticmethod(lambda: manager),
+    )
+
+    result = asyncio.run(mcp_api.chat("device-1", "open settings"))
+
+    assert result["success"] is True
+    assert manager.agent.seen_run_limit_type == "steps"
+    assert manager.agent.seen_max_steps == mcp_api.MCP_MAX_STEPS
+    assert manager.agent.agent_config.run_limit_type == "duration"
+    assert manager.agent.agent_config.max_steps is None
+    assert manager.agent.agent_config.max_duration_seconds == 86400
+    assert manager.released == ["device-1"]

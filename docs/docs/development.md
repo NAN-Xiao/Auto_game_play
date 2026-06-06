@@ -12,7 +12,7 @@ title: 开发指南
 uv run autoglm-gui --base-url http://localhost:8080/v1 --reload
 
 # 前端开发服务器（热重载）
-cd frontend && pnpm dev
+cd frontend && npm run dev
 ```
 
 ### 构建和打包

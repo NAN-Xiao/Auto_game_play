@@ -39,6 +39,70 @@ def test_task_store_creates_sessions_and_task_events(tmp_path: Path) -> None:
     assert events[1]["payload"] == {"chunk": "先看屏幕"}
 
 
+def test_task_store_finds_latest_reportable_session_task(tmp_path: Path) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    session = store.create_session(
+        kind="chat",
+        mode="classic",
+        device_id="device-1",
+        device_serial="serial-1",
+    )
+
+    no_steps = store.create_task_run(
+        source="chat",
+        executor_key="classic_chat",
+        session_id=session["id"],
+        device_id="device-1",
+        device_serial="serial-1",
+        input_text="no steps",
+    )
+    store.update_task_terminal(
+        task_id=no_steps["id"],
+        status=TaskStatus.SUCCEEDED.value,
+        final_message="done",
+        error_message=None,
+        step_count=0,
+    )
+
+    report_task = store.create_task_run(
+        source="chat",
+        executor_key="experience_report",
+        session_id=session["id"],
+        device_id="device-1",
+        device_serial="serial-1",
+        input_text="report",
+    )
+    store.update_task_terminal(
+        task_id=report_task["id"],
+        status=TaskStatus.SUCCEEDED.value,
+        final_message="report",
+        error_message=None,
+        step_count=10,
+    )
+
+    reportable = store.create_task_run(
+        source="chat",
+        executor_key="layered_chat",
+        session_id=session["id"],
+        device_id="device-1",
+        device_serial="serial-1",
+        input_text="experience",
+    )
+    store.update_task_terminal(
+        task_id=reportable["id"],
+        status=TaskStatus.CANCELLED.value,
+        final_message="stopped",
+        error_message="stopped",
+        stop_reason="user_stopped",
+        step_count=3,
+    )
+
+    selected = store.get_latest_reportable_session_task(session["id"])
+
+    assert selected is not None
+    assert selected["id"] == reportable["id"]
+
+
 def test_task_store_persists_trace_id(tmp_path: Path) -> None:
     store = TaskStore(tmp_path / "tasks.db")
 

@@ -34,18 +34,18 @@ def get_backend_version() -> str:
 
 
 def build_frontend() -> bool:
-    """Build the frontend using pnpm."""
+    """Build the frontend using npm."""
     print("Building frontend...")
 
-    # Resolve pnpm executable
-    pnpm_exe = shutil.which("pnpm")
-    if not pnpm_exe:
-        print("Error: pnpm is not installed. Please install pnpm first.")
+    # Resolve npm executable
+    npm_exe = shutil.which("npm")
+    if not npm_exe:
+        print("Error: npm is not installed. Please install Node.js/npm first.")
         return False
 
     # Install dependencies
     print("Installing frontend dependencies...")
-    result = subprocess.run([pnpm_exe, "install"], cwd=FRONTEND_DIR)
+    result = subprocess.run([npm_exe, "install"], cwd=FRONTEND_DIR)
     if result.returncode != 0:
         print("Error: Failed to install frontend dependencies.")
         return False
@@ -55,7 +55,7 @@ def build_frontend() -> bool:
     env = os.environ.copy()
     env["VITE_BACKEND_VERSION"] = get_backend_version()
     print(f"Frontend build version: {env['VITE_BACKEND_VERSION']}")
-    result = subprocess.run([pnpm_exe, "build"], cwd=FRONTEND_DIR, env=env)
+    result = subprocess.run([npm_exe, "run", "build"], cwd=FRONTEND_DIR, env=env)
     if result.returncode != 0:
         print("Error: Failed to build frontend.")
         return False

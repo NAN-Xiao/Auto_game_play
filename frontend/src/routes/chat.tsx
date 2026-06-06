@@ -238,7 +238,9 @@ export function ChatComponent() {
     api_key: '',
     agent_type: 'glm-async',
     agent_config_params: {} as Record<string, unknown>,
+    run_limit_type: 'steps' as 'steps' | 'duration' | 'unlimited',
     default_max_steps: 100 as number | '',
+    default_max_duration_seconds: 3600 as number | '',
     layered_max_turns: 50,
     decision_base_url: '',
     decision_model_name: '',
@@ -259,7 +261,10 @@ export function ChatComponent() {
           api_key: data.api_key || undefined,
           agent_type: data.agent_type || 'glm-async',
           agent_config_params: data.agent_config_params || undefined,
+          run_limit_type: data.run_limit_type || 'steps',
           default_max_steps: data.default_max_steps ?? null,
+          default_max_duration_seconds:
+            data.default_max_duration_seconds ?? null,
           layered_max_turns: data.layered_max_turns || 50,
           decision_base_url: data.decision_base_url || undefined,
           decision_model_name: data.decision_model_name || undefined,
@@ -277,7 +282,9 @@ export function ChatComponent() {
           api_key: data.api_key || '',
           agent_type: data.agent_type || 'glm-async',
           agent_config_params: data.agent_config_params || {},
+          run_limit_type: data.run_limit_type || 'steps',
           default_max_steps: data.default_max_steps ?? '',
+          default_max_duration_seconds: data.default_max_duration_seconds ?? '',
           layered_max_turns: data.layered_max_turns || 50,
           decision_base_url: data.decision_base_url || '',
           decision_model_name: data.decision_model_name || 'glm-4.7',
@@ -334,10 +341,40 @@ export function ChatComponent() {
       showToast(t.chat.baseUrlRequired, 'error');
       return;
     }
+    if (
+      tempConfig.run_limit_type === 'steps' &&
+      tempConfig.default_max_steps === ''
+    ) {
+      showToast(
+        t.chat.maxStepsRequired || 'Max execution steps is required',
+        'error'
+      );
+      return;
+    }
+    if (
+      tempConfig.run_limit_type === 'duration' &&
+      tempConfig.default_max_duration_seconds === ''
+    ) {
+      showToast(
+        t.chat.maxDurationRequired || 'Max working duration is required',
+        'error'
+      );
+      return;
+    }
+    const maxStepsForSave =
+      tempConfig.run_limit_type === 'steps' &&
+      tempConfig.default_max_steps !== ''
+        ? tempConfig.default_max_steps
+        : null;
+    const maxDurationForSave =
+      tempConfig.run_limit_type === 'duration' &&
+      tempConfig.default_max_duration_seconds !== ''
+        ? tempConfig.default_max_duration_seconds
+        : null;
 
     try {
       // 1. 保存配置
-      const saveResult = await saveConfig({
+      const normalizedConfig: ConfigSaveRequest = {
         base_url: tempConfig.base_url,
         model_name: tempConfig.model_name || 'autoglm-phone-9b',
         api_key: tempConfig.api_key || undefined,
@@ -346,34 +383,26 @@ export function ChatComponent() {
           Object.keys(tempConfig.agent_config_params).length > 0
             ? tempConfig.agent_config_params
             : undefined,
-        default_max_steps:
-          tempConfig.default_max_steps === ''
-            ? null
-            : tempConfig.default_max_steps,
+        run_limit_type: tempConfig.run_limit_type,
+        default_max_steps: maxStepsForSave,
+        default_max_duration_seconds: maxDurationForSave,
         layered_max_turns: tempConfig.layered_max_turns,
         decision_base_url: tempConfig.decision_base_url || undefined,
         decision_model_name: tempConfig.decision_model_name || undefined,
         decision_api_key: tempConfig.decision_api_key || undefined,
-      });
+      };
 
-      setConfig({
-        base_url: tempConfig.base_url,
-        model_name: tempConfig.model_name,
-        api_key: tempConfig.api_key || undefined,
-        agent_type: tempConfig.agent_type,
-        agent_config_params:
-          Object.keys(tempConfig.agent_config_params).length > 0
-            ? tempConfig.agent_config_params
-            : undefined,
+      const saveResult = await saveConfig(normalizedConfig);
+
+      setConfig(normalizedConfig);
+      setTempConfig(prev => ({
+        ...prev,
         default_max_steps:
-          tempConfig.default_max_steps === ''
-            ? null
-            : tempConfig.default_max_steps,
-        layered_max_turns: tempConfig.layered_max_turns,
-        decision_base_url: tempConfig.decision_base_url || undefined,
-        decision_model_name: tempConfig.decision_model_name || undefined,
-        decision_api_key: tempConfig.decision_api_key || undefined,
-      });
+          normalizedConfig.default_max_steps ?? prev.default_max_steps,
+        default_max_duration_seconds:
+          normalizedConfig.default_max_duration_seconds ??
+          prev.default_max_duration_seconds,
+      }));
 
       // 配置已保存，后端支持热更新，无需重启
       showToast(t.toasts.configSaved, 'success');
@@ -807,39 +836,128 @@ export function ChatComponent() {
                 </div>
               )}
 
-              {/* 最大执行步数配置 */}
-              <div className="space-y-2">
-                <Label htmlFor="default_max_steps">
-                  {t.chat.maxSteps || '最大执行步数'}
-                </Label>
-                <Input
-                  id="default_max_steps"
-                  type="number"
-                  min={1}
-                  value={tempConfig.default_max_steps}
-                  onChange={e => {
-                    const rawValue = e.target.value.trim();
-                    setTempConfig(prev => ({
-                      ...prev,
-                      default_max_steps:
-                        rawValue === ''
-                          ? ''
-                          : Math.max(1, parseInt(rawValue, 10) || 1),
-                    }));
-                  }}
-                  placeholder="留空表示不限制"
-                  className="w-full"
-                />
-                <div className="space-y-1">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {t.chat?.maxStepsEmptyHint ||
-                      'Leave empty for unlimited steps; the task will run until manually stopped.'}
-                  </p>
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
-                    {t.chat?.advancedConfigWarning ||
-                      'Advanced setting: changes affect default behavior for subsequent tasks and may increase execution time and model API costs.'}
-                  </p>
+              {/* 运行上限配置 */}
+              <div className="space-y-3">
+                <Label>{t.chat.runLimit || '运行上限'}</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    {
+                      value: 'steps',
+                      label: t.chat.runLimitSteps || '按步数',
+                    },
+                    {
+                      value: 'duration',
+                      label: t.chat.runLimitDuration || '按时长',
+                    },
+                    {
+                      value: 'unlimited',
+                      label: t.chat.runLimitUnlimited || '不限制',
+                    },
+                  ].map(option => (
+                    <Button
+                      key={option.value}
+                      type="button"
+                      variant={
+                        tempConfig.run_limit_type === option.value
+                          ? 'default'
+                          : 'outline'
+                      }
+                      onClick={() => {
+                        setTempConfig(prev => ({
+                          ...prev,
+                          run_limit_type: option.value as
+                            | 'steps'
+                            | 'duration'
+                            | 'unlimited',
+                          default_max_steps:
+                            option.value === 'steps' &&
+                            prev.default_max_steps === ''
+                              ? 100
+                              : prev.default_max_steps,
+                          default_max_duration_seconds:
+                            option.value === 'duration' &&
+                            prev.default_max_duration_seconds === ''
+                              ? 86400
+                              : prev.default_max_duration_seconds,
+                        }));
+                      }}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
                 </div>
+
+                {tempConfig.run_limit_type === 'steps' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="default_max_steps">
+                      {t.chat.maxSteps || '最大执行步数'}
+                    </Label>
+                    <Input
+                      id="default_max_steps"
+                      type="number"
+                      min={1}
+                      value={tempConfig.default_max_steps}
+                      onChange={e => {
+                        const rawValue = e.target.value.trim();
+                        setTempConfig(prev => ({
+                          ...prev,
+                          default_max_steps:
+                            rawValue === ''
+                              ? ''
+                              : Math.max(1, parseInt(rawValue, 10) || 1),
+                        }));
+                      }}
+                      placeholder="100"
+                      className="w-full"
+                    />
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {t.chat.maxStepsHint ||
+                        'Maximum steps per task. Duration limit will not apply.'}
+                    </p>
+                  </div>
+                )}
+
+                {tempConfig.run_limit_type === 'duration' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="default_max_duration_seconds">
+                      {t.chat.maxDuration || '最大持续工作时长（秒）'}
+                    </Label>
+                    <Input
+                      id="default_max_duration_seconds"
+                      type="number"
+                      min={1}
+                      value={tempConfig.default_max_duration_seconds}
+                      onChange={e => {
+                        const rawValue = e.target.value.trim();
+                        setTempConfig(prev => ({
+                          ...prev,
+                          default_max_duration_seconds:
+                            rawValue === ''
+                              ? ''
+                              : Math.max(1, parseInt(rawValue, 10) || 1),
+                        }));
+                      }}
+                      placeholder="86400"
+                      className="w-full"
+                    />
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {t.chat.maxDurationHint ||
+                        'When duration is selected, max steps will not stop the task.'}
+                    </p>
+                  </div>
+                )}
+
+                {tempConfig.run_limit_type === 'unlimited' && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {t.chat.runLimitUnlimitedHint ||
+                      'Tasks will keep running until manually stopped or interrupted by an error/watchdog.'}
+                  </p>
+                )}
+
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  {t.chat?.advancedConfigWarning ||
+                    'Advanced setting: changes affect default behavior for subsequent tasks and may increase execution time and model API costs.'}
+                </p>
               </div>
 
               {/* 分层代理最大轮次配置 */}
@@ -1095,7 +1213,10 @@ export function ChatComponent() {
                     api_key: config.api_key || '',
                     agent_type: config.agent_type || 'glm-async',
                     agent_config_params: config.agent_config_params || {},
+                    run_limit_type: config.run_limit_type || 'steps',
                     default_max_steps: config.default_max_steps ?? '',
+                    default_max_duration_seconds:
+                      config.default_max_duration_seconds ?? '',
                     layered_max_turns: config.layered_max_turns || 50,
                     decision_base_url: config.decision_base_url || '',
                     decision_model_name:
@@ -1230,7 +1351,9 @@ export function ChatComponent() {
                     deviceName={currentDevice.model}
                     deviceConnectionType={currentDevice.connection_type}
                     isVisible={currentDevice.id === currentDeviceId}
-                    unlimitedStepsEnabled={config?.default_max_steps === null}
+                    unlimitedStepsEnabled={
+                      config?.run_limit_type === 'unlimited'
+                    }
                   />
                 </div>
               ) : (
@@ -1242,7 +1365,9 @@ export function ChatComponent() {
                     deviceConnectionType={currentDevice.connection_type}
                     isConfigured={!!config?.base_url}
                     isVisible={currentDevice.id === currentDeviceId}
-                    unlimitedStepsEnabled={config?.default_max_steps === null}
+                    unlimitedStepsEnabled={
+                      config?.run_limit_type === 'unlimited'
+                    }
                     agentType={config?.agent_type}
                   />
                 </div>

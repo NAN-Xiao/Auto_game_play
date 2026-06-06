@@ -80,8 +80,8 @@ def run_command(
     print(f"{Color.BLUE}$ {cmd_str}{Color.RESET}")
 
     try:
-        # Windows 下 pnpm/npm 等命令需要通过 shell 执行
-        use_shell = sys.platform == "win32" and cmd[0] in ["pnpm", "npm"]
+        # Windows 下 npm 等命令需要通过 shell 执行
+        use_shell = sys.platform == "win32" and cmd[0] == "npm"
 
         result = subprocess.run(
             cmd,
@@ -104,7 +104,7 @@ def run_command(
 def check_command(cmd: str) -> bool:
     """检查命令是否可用"""
     try:
-        # Windows 下某些命令（如 pnpm）需要通过 shell 执行
+        # Windows 下某些命令需要通过 shell 执行
         subprocess.run(
             [cmd, "--version"],
             capture_output=True,
@@ -149,7 +149,7 @@ class ElectronBuilder:
         required_tools = {
             "uv": "Python 包管理器",
             "node": "Node.js 运行时",
-            "pnpm": "pnpm 包管理器",
+            "npm": "npm 包管理器",
         }
 
         missing_tools = []
@@ -167,8 +167,8 @@ class ElectronBuilder:
                 print("  uv: curl -LsSf https://astral.sh/uv/install.sh | sh")
             if "node" in missing_tools:
                 print("  Node.js: https://nodejs.org/")
-            if "pnpm" in missing_tools:
-                print("  pnpm: npm install -g pnpm")
+            if "npm" in missing_tools:
+                print("  npm: install Node.js from https://nodejs.org/")
             return False
 
         return True
@@ -186,7 +186,7 @@ class ElectronBuilder:
 
         # 安装前端依赖
         print("\n安装前端依赖...")
-        if not run_command(["pnpm", "install"], cwd=self.frontend_dir):
+        if not run_command(["npm", "install"], cwd=self.frontend_dir):
             return False
 
         # 构建前端
@@ -194,7 +194,7 @@ class ElectronBuilder:
         env = os.environ.copy()
         env["VITE_BACKEND_VERSION"] = get_backend_version(self.root_dir)
         print(f"前端构建版本: {env['VITE_BACKEND_VERSION']}")
-        if not run_command(["pnpm", "build"], cwd=self.frontend_dir, env=env):
+        if not run_command(["npm", "run", "build"], cwd=self.frontend_dir, env=env):
             return False
 
         # 复制前端构建产物到后端 static 目录
@@ -328,8 +328,8 @@ class ElectronBuilder:
         """构建 Electron 应用"""
         print_step("安装 Electron 依赖", 7, 6)
 
-        # 安装 Electron 依赖（使用 pnpm，electron-builder 26.x+ 已支持）
-        if not run_command(["pnpm", "install"], cwd=self.electron_dir):
+        # 安装 Electron 依赖
+        if not run_command(["npm", "install"], cwd=self.electron_dir):
             return False
 
         if not self.ensure_electron_dist_integrity():
@@ -342,7 +342,7 @@ class ElectronBuilder:
         print(f"发布模式: {publish_mode}")
 
         # 构建 Electron
-        build_cmd = ["pnpm", "run", "build", "--", "--publish", publish_mode]
+        build_cmd = ["npm", "run", "build", "--", "--publish", publish_mode]
         if not run_command(build_cmd, cwd=self.electron_dir):
             if self.is_macos:
                 # macOS 上可能需要清理磁盘镜像后重试

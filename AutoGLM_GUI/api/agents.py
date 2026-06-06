@@ -23,6 +23,7 @@ from AutoGLM_GUI.version import APP_VERSION
 
 router = APIRouter()
 
+INTERNAL_TASK_EVENT_TYPES = {"experience_segment_summary"}
 
 SSEPayload = dict[str, Any]
 
@@ -99,7 +100,7 @@ async def chat_stream(request: ChatRequest):
             for event in events:
                 last_seq = int(event["seq"])
                 event_type = str(event["event_type"])
-                if event_type in {"status", "user_message"}:
+                if event_type in {"status", "user_message", *INTERNAL_TASK_EVENT_TYPES}:
                     continue
                 sse_event = _create_sse_event(
                     event_type,
@@ -221,7 +222,9 @@ def get_config_endpoint() -> ConfigResponse:
         source=source.value,
         agent_type=effective_config.agent_type,
         agent_config_params=effective_config.agent_config_params,
+        run_limit_type=effective_config.run_limit_type,
         default_max_steps=effective_config.default_max_steps,
+        default_max_duration_seconds=effective_config.default_max_duration_seconds,
         layered_max_turns=effective_config.layered_max_turns,
         decision_base_url=effective_config.decision_base_url,
         decision_model_name=effective_config.decision_model_name,
@@ -250,12 +253,70 @@ def save_config_endpoint(request: ConfigSaveRequest) -> dict[str, Any]:
     from AutoGLM_GUI.phone_agent_manager import PhoneAgentManager
 
     try:
+        provided_fields = request.model_fields_set
+        current_config = config_manager.get_effective_config()
+        effective_run_limit_type = (
+            request.run_limit_type
+            if "run_limit_type" in provided_fields
+            else current_config.run_limit_type
+        )
+        effective_max_steps = (
+            request.default_max_steps
+            if "default_max_steps" in provided_fields
+            else current_config.default_max_steps
+        )
+        effective_max_duration_seconds = (
+            request.default_max_duration_seconds
+            if "default_max_duration_seconds" in provided_fields
+            else current_config.default_max_duration_seconds
+        )
+
+        max_steps_for_save = request.default_max_steps
+        max_duration_for_save = request.default_max_duration_seconds
+        max_steps_set = "default_max_steps" in provided_fields
+        max_duration_set = "default_max_duration_seconds" in provided_fields
+
+        if effective_run_limit_type == "steps":
+            if effective_max_steps is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "default_max_steps is required when run_limit_type is steps"
+                    ),
+                )
+            if "run_limit_type" in provided_fields:
+                max_steps_for_save = effective_max_steps
+                max_duration_for_save = None
+                max_steps_set = True
+                max_duration_set = True
+        elif effective_run_limit_type == "duration":
+            if effective_max_duration_seconds is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "default_max_duration_seconds is required when "
+                        "run_limit_type is duration"
+                    ),
+                )
+            if "run_limit_type" in provided_fields:
+                max_steps_for_save = None
+                max_duration_for_save = effective_max_duration_seconds
+                max_steps_set = True
+                max_duration_set = True
+        elif effective_run_limit_type == "unlimited":
+            if "run_limit_type" in provided_fields:
+                max_steps_for_save = None
+                max_duration_for_save = None
+                max_steps_set = True
+                max_duration_set = True
         # Validate incoming configuration
         ConfigModel(
             base_url=request.base_url,
             model_name=request.model_name,
             api_key=request.api_key or "EMPTY",
-            default_max_steps=request.default_max_steps,
+            run_limit_type=request.run_limit_type,
+            default_max_steps=max_steps_for_save,
+            default_max_duration_seconds=max_duration_for_save,
             layered_max_turns=request.layered_max_turns,
         )
 
@@ -268,13 +329,19 @@ def save_config_endpoint(request: ConfigSaveRequest) -> dict[str, Any]:
             api_key=request.api_key,
             agent_type=request.agent_type,
             agent_config_params=request.agent_config_params,
-            default_max_steps=request.default_max_steps,
+            run_limit_type=request.run_limit_type
+            if "run_limit_type" in provided_fields
+            else None,
+            default_max_steps=max_steps_for_save,
+            default_max_duration_seconds=max_duration_for_save,
             layered_max_turns=request.layered_max_turns,
             decision_base_url=request.decision_base_url,
             decision_model_name=request.decision_model_name,
             decision_api_key=request.decision_api_key,
             merge_mode=True,
-            default_max_steps_set="default_max_steps" in provided_fields,
+            run_limit_type_set="run_limit_type" in provided_fields,
+            default_max_steps_set=max_steps_set,
+            default_max_duration_seconds_set=max_duration_set,
             layered_max_turns_set="layered_max_turns" in provided_fields,
         )
 
@@ -320,6 +387,8 @@ def save_config_endpoint(request: ConfigSaveRequest) -> dict[str, Any]:
 
     except ValidationError as e:
         raise HTTPException(status_code=400, detail=f"Invalid configuration: {e}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

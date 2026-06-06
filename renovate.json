@@ -19,29 +19,29 @@
   },
   "packageRules": [
     {
-      "description": "Group frontend pnpm dependencies",
+      "description": "Group frontend npm dependencies",
       "matchManagers": ["npm"],
       "matchFileNames": ["frontend/package.json"],
       "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "frontend pnpm dependencies",
+      "groupName": "frontend npm dependencies",
       "commitMessagePrefix": "chore(deps):",
       "additionalBranchPrefix": "frontend-"
     },
     {
-      "description": "Group Electron pnpm dependencies",
+      "description": "Group Electron npm dependencies",
       "matchManagers": ["npm"],
       "matchFileNames": ["electron/package.json"],
       "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "electron pnpm dependencies",
+      "groupName": "electron npm dependencies",
       "commitMessagePrefix": "chore(deps):",
       "additionalBranchPrefix": "electron-"
     },
     {
-      "description": "Group documentation pnpm dependencies",
+      "description": "Group documentation npm dependencies",
       "matchManagers": ["npm"],
       "matchFileNames": ["docs/package.json"],
       "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "docs pnpm dependencies",
+      "groupName": "docs npm dependencies",
       "commitMessagePrefix": "chore(deps):",
       "additionalBranchPrefix": "docs-"
     },

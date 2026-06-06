@@ -147,6 +147,57 @@ class FakeInteractionAgent(AsyncAgentBase):
         }
 
 
+class LimitFakeAgent(AsyncAgentBase):
+    def __init__(self, agent_config: AgentConfig) -> None:
+        super().__init__(
+            model_config=ModelConfig(),
+            agent_config=agent_config,
+            device=StreamFakeDevice(),
+        )
+
+    def _get_default_system_prompt(self, lang: str) -> str:
+        _ = lang
+        return "system"
+
+    def _prepare_initial_context(
+        self,
+        task: str,
+        screenshot_base64: str,
+        current_app: str,
+        reference_images: list[dict[str, str]] | None = None,
+    ) -> None:
+        _ = (task, screenshot_base64, current_app, reference_images)
+
+    async def _execute_step(self) -> AsyncGenerator[dict[str, Any], None]:
+        self._step_count += 1
+        yield {
+            "type": "step",
+            "data": {
+                "step": self._step_count,
+                "thinking": "continue",
+                "action": {"action": f"Tap-{self._step_count}"},
+                "success": True,
+                "finished": False,
+            },
+        }
+
+
+class SelfFinishingLimitFakeAgent(LimitFakeAgent):
+    async def _execute_step(self) -> AsyncGenerator[dict[str, Any], None]:
+        self._step_count += 1
+        yield {
+            "type": "step",
+            "data": {
+                "step": self._step_count,
+                "thinking": "finish",
+                "action": {"action": f"Tap-{self._step_count}"},
+                "success": True,
+                "finished": self._step_count >= 3,
+                "message": "done",
+            },
+        }
+
+
 def _noop_takeover(message: str) -> None:
     pass
 
@@ -339,6 +390,42 @@ class TestInteractionActionsIntegration:
         assert device.screenshot_calls == 1
         assert device.current_app_calls == 1
         assert agent.context[-1] == MessageBuilder.create_user_message("已完成登录")
+
+    def test_agent_stream_stops_by_steps_limit(self) -> None:
+        agent = LimitFakeAgent(AgentConfig(max_steps=2, verbose=False))
+
+        events = asyncio.run(_collect_stream(agent.stream("run by steps")))
+
+        assert [event["type"] for event in events] == ["step", "step", "done"]
+        assert events[-1]["data"]["stop_reason"] == "max_steps_reached"
+        assert events[-1]["data"]["steps"] == 2
+
+    def test_agent_stream_duration_limit_ignores_max_steps(self) -> None:
+        agent = SelfFinishingLimitFakeAgent(
+            AgentConfig(
+                max_steps=1,
+                run_limit_type="duration",
+                max_duration_seconds=3600,
+                verbose=False,
+            )
+        )
+
+        events = asyncio.run(_collect_stream(agent.stream("run by duration")))
+
+        assert [event["type"] for event in events] == ["step", "step", "step", "done"]
+        assert events[-1]["data"]["message"] == "done"
+        assert events[-1]["data"]["steps"] == 3
+
+    def test_agent_stream_unlimited_ignores_max_steps(self) -> None:
+        agent = SelfFinishingLimitFakeAgent(
+            AgentConfig(max_steps=1, run_limit_type="unlimited", verbose=False)
+        )
+
+        events = asyncio.run(_collect_stream(agent.stream("run unlimited")))
+
+        assert [event["type"] for event in events] == ["step", "step", "step", "done"]
+        assert events[-1]["data"]["message"] == "done"
+        assert events[-1]["data"]["steps"] == 3
 
 
 async def _collect_stream(stream: Any) -> list[dict[str, Any]]:

@@ -25,7 +25,6 @@ from AutoGLM_GUI.model import MessageBuilder
 from AutoGLM_GUI.trace import summarize_text, trace_span
 
 
-WATCHDOG_MAX_RUNTIME_SECONDS = 60 * 60
 WATCHDOG_REPEATED_ACTION_LIMIT = 12
 WATCHDOG_NO_PROGRESS_LIMIT = 20
 
@@ -142,7 +141,9 @@ class AsyncAgentBase(ABC):
                 "agent_type": self.__class__.__name__,
                 "device_id": self.device.device_id,
                 "model_name": self.model_config.model_name,
+                "run_limit_type": self.agent_config.run_limit_type,
                 "max_steps": self.agent_config.max_steps,
+                "max_duration_seconds": self.agent_config.max_duration_seconds,
                 "task_preview": summarize_text(task) or "",
             },
         ) as stream_span:
@@ -197,10 +198,21 @@ class AsyncAgentBase(ABC):
                 no_progress_count = 0
                 last_action_signature: str | None = None
 
-                while self._is_running and (
-                    self.agent_config.max_steps is None
-                    or self._step_count < self.agent_config.max_steps
-                ):
+                while self._is_running:
+                    elapsed_seconds = time.monotonic() - started_at
+                    if (
+                        self.agent_config.run_limit_type == "steps"
+                        and self.agent_config.max_steps is not None
+                        and self._step_count >= self.agent_config.max_steps
+                    ):
+                        break
+                    if (
+                        self.agent_config.run_limit_type == "duration"
+                        and self.agent_config.max_duration_seconds is not None
+                        and elapsed_seconds >= self.agent_config.max_duration_seconds
+                    ):
+                        break
+
                     if self._cancel_event.is_set():
                         raise asyncio.CancelledError()
 
@@ -320,44 +332,51 @@ class AsyncAgentBase(ABC):
                                 }
                                 return
 
-                            if (
-                                time.monotonic() - started_at
-                                >= WATCHDOG_MAX_RUNTIME_SECONDS
-                            ):
-                                stream_span.set_attributes(
-                                    {
-                                        "success": False,
-                                        "steps": self._step_count,
-                                        "error_kind": "watchdog_timeout",
-                                    }
-                                )
-                                yield {
-                                    "type": "done",
-                                    "data": {
-                                        "message": "Watchdog stopped task after maximum runtime was reached",
-                                        "steps": self._step_count,
-                                        "success": False,
-                                        "stop_reason": "watchdog_timeout",
-                                    },
-                                }
-                                return
-
-                stream_span.set_attributes(
-                    {
-                        "success": False,
-                        "steps": self._step_count,
-                        "error_kind": "max_steps",
+                if (
+                    self.agent_config.run_limit_type == "duration"
+                    and self.agent_config.max_duration_seconds is not None
+                    and time.monotonic() - started_at
+                    >= self.agent_config.max_duration_seconds
+                ):
+                    stream_span.set_attributes(
+                        {
+                            "success": False,
+                            "steps": self._step_count,
+                            "error_kind": "max_duration",
+                        }
+                    )
+                    yield {
+                        "type": "done",
+                        "data": {
+                            "message": "Max duration reached",
+                            "steps": self._step_count,
+                            "success": False,
+                            "stop_reason": "max_duration_reached",
+                        },
                     }
-                )
-                yield {
-                    "type": "done",
-                    "data": {
-                        "message": "Max steps reached",
-                        "steps": self._step_count,
-                        "success": False,
-                        "stop_reason": "max_steps_reached",
-                    },
-                }
+                    return
+
+                if (
+                    self.agent_config.run_limit_type == "steps"
+                    and self.agent_config.max_steps is not None
+                    and self._step_count >= self.agent_config.max_steps
+                ):
+                    stream_span.set_attributes(
+                        {
+                            "success": False,
+                            "steps": self._step_count,
+                            "error_kind": "max_steps",
+                        }
+                    )
+                    yield {
+                        "type": "done",
+                        "data": {
+                            "message": "Max steps reached",
+                            "steps": self._step_count,
+                            "success": False,
+                            "stop_reason": "max_steps_reached",
+                        },
+                    }
 
             except asyncio.CancelledError:
                 stream_span.set_attributes(

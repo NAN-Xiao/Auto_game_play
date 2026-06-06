@@ -23,6 +23,7 @@ from typing import Any, Self, cast
 from pydantic import BaseModel, field_validator
 from typing_extensions import TypedDict
 
+from AutoGLM_GUI.config import RunLimitType
 from AutoGLM_GUI.logger import logger
 
 
@@ -58,7 +59,9 @@ class ConfigFileData(TypedDict, total=False):
     api_key: str
     agent_type: str
     agent_config_params: dict[str, Any]
+    run_limit_type: RunLimitType
     default_max_steps: int | None
+    default_max_duration_seconds: int | None
     layered_max_turns: int | None
     decision_base_url: str
     decision_model_name: str
@@ -77,7 +80,9 @@ class ConfigModel(BaseModel):
     agent_config_params: dict[str, Any] | None = None  # Agent-specific configuration
 
     # Agent 执行配置
+    run_limit_type: RunLimitType = "steps"
     default_max_steps: int | None = 100  # None 表示不限制
+    default_max_duration_seconds: int | None = None  # None 表示不限制
 
     layered_max_turns: int | None = LAYERED_MAX_TURNS_DEFAULT
 
@@ -94,6 +99,24 @@ class ConfigModel(BaseModel):
             return v
         if v <= 0:
             raise ValueError("default_max_steps must be positive")
+        return v
+
+    @field_validator("run_limit_type")
+    @classmethod
+    def validate_run_limit_type(cls, v: str) -> RunLimitType:
+        if v not in {"steps", "duration", "unlimited"}:
+            raise ValueError(
+                "run_limit_type must be one of: steps, duration, unlimited"
+            )
+        return cast(RunLimitType, v)
+
+    @field_validator("default_max_duration_seconds")
+    @classmethod
+    def validate_default_max_duration_seconds(cls, v: int | None) -> int | None:
+        if v is None:
+            return v
+        if v <= 0:
+            raise ValueError("default_max_duration_seconds must be positive")
         return v
 
     @field_validator("base_url")
@@ -156,7 +179,9 @@ class ConfigLayer:
     agent_type: str | None = None
     agent_config_params: dict[str, Any] | None = None
     # Agent 执行配置
+    run_limit_type: RunLimitType | None = None
     default_max_steps: int | None = None
+    default_max_duration_seconds: int | None = None
     layered_max_turns: int | None = None
     # 决策模型配置
     decision_base_url: str | None = None
@@ -179,7 +204,9 @@ class ConfigLayer:
             "api_key": self.api_key,
             "agent_type": self.agent_type,
             "agent_config_params": self.agent_config_params,
+            "run_limit_type": self.run_limit_type,
             "default_max_steps": self.default_max_steps,
+            "default_max_duration_seconds": self.default_max_duration_seconds,
             "layered_max_turns": self.layered_max_turns,
             "decision_base_url": self.decision_base_url,
             "decision_model_name": self.decision_model_name,
@@ -247,7 +274,9 @@ class UnifiedConfigManager:
             api_key="EMPTY",
             agent_type="glm-async",
             agent_config_params=None,
+            run_limit_type="steps",
             default_max_steps=100,
+            default_max_duration_seconds=None,
             layered_max_turns=LAYERED_MAX_TURNS_DEFAULT,
             decision_base_url=None,
             decision_model_name=None,
@@ -314,7 +343,9 @@ class UnifiedConfigManager:
         - AUTOGLM_DECISION_BASE_URL
         - AUTOGLM_DECISION_MODEL_NAME
         - AUTOGLM_DECISION_API_KEY
+        - AUTOGLM_RUN_LIMIT_TYPE
         - AUTOGLM_DEFAULT_MAX_STEPS
+        - AUTOGLM_DEFAULT_MAX_DURATION_SECONDS
         - AUTOGLM_LAYERED_MAX_TURNS
         """
         base_url = os.getenv("AUTOGLM_BASE_URL")
@@ -326,6 +357,17 @@ class UnifiedConfigManager:
         decision_model_name = os.getenv("AUTOGLM_DECISION_MODEL_NAME")
         decision_api_key = os.getenv("AUTOGLM_DECISION_API_KEY")
 
+        run_limit_type_str = os.getenv("AUTOGLM_RUN_LIMIT_TYPE")
+        run_limit_type: RunLimitType | None = None
+        if run_limit_type_str:
+            normalized = run_limit_type_str.strip().lower()
+            if normalized in {"steps", "duration", "unlimited"}:
+                run_limit_type = cast(RunLimitType, normalized)
+            else:
+                logger.warning(
+                    "AUTOGLM_RUN_LIMIT_TYPE must be one of: steps, duration, unlimited"
+                )
+
         default_max_steps_str = os.getenv("AUTOGLM_DEFAULT_MAX_STEPS")
         default_max_steps = None
         if default_max_steps_str:
@@ -333,6 +375,18 @@ class UnifiedConfigManager:
                 default_max_steps = int(default_max_steps_str)
             except ValueError:
                 logger.warning("AUTOGLM_DEFAULT_MAX_STEPS must be an integer")
+
+        default_max_duration_seconds_str = os.getenv(
+            "AUTOGLM_DEFAULT_MAX_DURATION_SECONDS"
+        )
+        default_max_duration_seconds = None
+        if default_max_duration_seconds_str:
+            try:
+                default_max_duration_seconds = int(default_max_duration_seconds_str)
+            except ValueError:
+                logger.warning(
+                    "AUTOGLM_DEFAULT_MAX_DURATION_SECONDS must be an integer"
+                )
 
         layered_max_turns_str = os.getenv("AUTOGLM_LAYERED_MAX_TURNS")
         layered_max_turns = None
@@ -346,7 +400,9 @@ class UnifiedConfigManager:
             "base_url": base_url if base_url else None,
             "model_name": model_name if model_name else None,
             "api_key": api_key if api_key else None,
+            "run_limit_type": run_limit_type,
             "default_max_steps": default_max_steps,
+            "default_max_duration_seconds": default_max_duration_seconds,
             "layered_max_turns": layered_max_turns,
             "decision_base_url": decision_base_url if decision_base_url else None,
             "decision_model_name": decision_model_name if decision_model_name else None,
@@ -412,6 +468,14 @@ class UnifiedConfigManager:
                 )
                 raw_agent_type = "glm-async"
 
+            file_run_limit_type = config_data.get("run_limit_type")
+            if (
+                file_run_limit_type is None
+                and "default_max_steps" in config_data
+                and config_data.get("default_max_steps") is None
+            ):
+                file_run_limit_type = "unlimited"
+
             # 更新文件层
             file_values = {
                 "base_url": config_data.get("base_url"),
@@ -419,7 +483,11 @@ class UnifiedConfigManager:
                 "api_key": config_data.get("api_key"),
                 "agent_type": raw_agent_type,
                 "agent_config_params": config_data.get("agent_config_params"),
+                "run_limit_type": file_run_limit_type,
                 "default_max_steps": config_data.get("default_max_steps"),
+                "default_max_duration_seconds": config_data.get(
+                    "default_max_duration_seconds"
+                ),
                 "layered_max_turns": config_data.get("layered_max_turns"),
                 "decision_base_url": config_data.get("decision_base_url"),
                 "decision_model_name": config_data.get("decision_model_name"),
@@ -457,13 +525,17 @@ class UnifiedConfigManager:
         api_key: str | None = None,
         agent_type: str | None = None,
         agent_config_params: dict[str, Any] | None = None,
+        run_limit_type: RunLimitType | None = None,
         default_max_steps: int | None = None,
+        default_max_duration_seconds: int | None = None,
         layered_max_turns: int | None = None,
         decision_base_url: str | None = None,
         decision_model_name: str | None = None,
         decision_api_key: str | None = None,
         merge_mode: bool = True,
+        run_limit_type_set: bool = False,
         default_max_steps_set: bool = False,
+        default_max_duration_seconds_set: bool = False,
         layered_max_turns_set: bool = False,
     ) -> bool:
         """
@@ -475,7 +547,9 @@ class UnifiedConfigManager:
             api_key: API key（可选）
             agent_type: Agent 类型（可选，如 "glm-async", "mai"）
             agent_config_params: Agent 特定配置参数（可选）
+            run_limit_type: 运行上限类型（steps/duration/unlimited）
             default_max_steps: 默认最大执行步数（可选）
+            default_max_duration_seconds: 默认最大持续时长（可选，秒）
             layered_max_turns: 分层代理最大轮数（可选）
             decision_base_url: 决策模型 Base URL（可选）
             decision_model_name: 决策模型名称（可选）
@@ -501,10 +575,22 @@ class UnifiedConfigManager:
                 new_config["agent_type"] = agent_type
             if agent_config_params is not None:
                 new_config["agent_config_params"] = agent_config_params
+            if run_limit_type_set:
+                new_config["run_limit_type"] = run_limit_type or "steps"
+            elif run_limit_type is not None:
+                new_config["run_limit_type"] = run_limit_type
             if default_max_steps_set:
                 new_config["default_max_steps"] = default_max_steps
             elif default_max_steps is not None:
                 new_config["default_max_steps"] = default_max_steps
+            if default_max_duration_seconds_set:
+                new_config["default_max_duration_seconds"] = (
+                    default_max_duration_seconds
+                )
+            elif default_max_duration_seconds is not None:
+                new_config["default_max_duration_seconds"] = (
+                    default_max_duration_seconds
+                )
             if layered_max_turns_set:
                 new_config["layered_max_turns"] = layered_max_turns
             elif layered_max_turns is not None:
@@ -529,7 +615,9 @@ class UnifiedConfigManager:
                         "api_key",
                         "agent_type",
                         "agent_config_params",
+                        "run_limit_type",
                         "default_max_steps",
+                        "default_max_duration_seconds",
                         "layered_max_turns",
                         "decision_base_url",
                         "decision_model_name",
@@ -620,7 +708,9 @@ class UnifiedConfigManager:
             "api_key",
             "agent_type",
             "agent_config_params",
+            "run_limit_type",
             "default_max_steps",
+            "default_max_duration_seconds",
             "decision_base_url",
             "decision_model_name",
             "decision_api_key",
@@ -762,11 +852,19 @@ class UnifiedConfigManager:
         os.environ["AUTOGLM_BASE_URL"] = config.base_url
         os.environ["AUTOGLM_MODEL_NAME"] = config.model_name
         os.environ["AUTOGLM_API_KEY"] = config.api_key
+        os.environ["AUTOGLM_RUN_LIMIT_TYPE"] = config.run_limit_type
 
         if config.default_max_steps is None:
             os.environ.pop("AUTOGLM_DEFAULT_MAX_STEPS", None)
         else:
             os.environ["AUTOGLM_DEFAULT_MAX_STEPS"] = str(config.default_max_steps)
+
+        if config.default_max_duration_seconds is None:
+            os.environ.pop("AUTOGLM_DEFAULT_MAX_DURATION_SECONDS", None)
+        else:
+            os.environ["AUTOGLM_DEFAULT_MAX_DURATION_SECONDS"] = str(
+                config.default_max_duration_seconds
+            )
 
         if config.layered_max_turns is None:
             os.environ.pop("AUTOGLM_LAYERED_MAX_TURNS", None)
@@ -801,7 +899,9 @@ class UnifiedConfigManager:
                 "api_key": config.api_key,
                 "agent_type": config.agent_type,
                 "agent_config_params": config.agent_config_params,
+                "run_limit_type": config.run_limit_type,
                 "default_max_steps": config.default_max_steps,
+                "default_max_duration_seconds": config.default_max_duration_seconds,
                 "decision_base_url": config.decision_base_url,
                 "decision_model_name": config.decision_model_name,
                 "decision_api_key": config.decision_api_key,

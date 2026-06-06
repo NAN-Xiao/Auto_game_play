@@ -26,6 +26,7 @@ mcp = FastMCP("AutoGLM-GUI MCP Server")
 
 # MCP-specific step limit
 MCP_MAX_STEPS = 5
+INTERNAL_TASK_EVENT_TYPES = {"experience_segment_summary"}
 
 
 @mcp.tool()
@@ -64,9 +65,13 @@ async def chat(device_id: str, message: str) -> ChatResult:
 
         # Temporarily override config for MCP (thread-safe within device lock)
         original_max_steps = agent.agent_config.max_steps
+        original_run_limit_type = agent.agent_config.run_limit_type
+        original_max_duration_seconds = agent.agent_config.max_duration_seconds
         original_system_prompt = agent.agent_config.system_prompt
 
         agent.agent_config.max_steps = MCP_MAX_STEPS
+        agent.agent_config.run_limit_type = "steps"
+        agent.agent_config.max_duration_seconds = None
         agent.agent_config.system_prompt = MCP_SYSTEM_PROMPT_ZH
 
         try:
@@ -92,6 +97,8 @@ async def chat(device_id: str, message: str) -> ChatResult:
         finally:
             # Restore original config
             agent.agent_config.max_steps = original_max_steps
+            agent.agent_config.run_limit_type = original_run_limit_type
+            agent.agent_config.max_duration_seconds = original_max_duration_seconds
             agent.agent_config.system_prompt = original_system_prompt
 
     except DeviceBusyError:
@@ -400,7 +407,11 @@ async def get_task_events(
 
     return {
         "task_id": task_id,
-        "events": [_task_event_response(e).model_dump() for e in events],
+        "events": [
+            _task_event_response(e).model_dump()
+            for e in events
+            if str(e["event_type"]) not in INTERNAL_TASK_EVENT_TYPES
+        ],
     }
 
 

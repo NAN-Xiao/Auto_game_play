@@ -175,6 +175,18 @@ export function ScrcpyPlayer({
     };
   }, []);
 
+  const detachCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (canvas?.parentNode) {
+      try {
+        canvas.parentNode.removeChild(canvas);
+      } catch (error) {
+        console.warn('[ScrcpyPlayer] Failed to detach canvas:', error);
+      }
+    }
+    canvasRef.current = null;
+  }, []);
+
   const createDecoder = useCallback(
     async (codecId: ScrcpyVideoCodecId) => {
       if (!WebCodecsVideoDecoder.isSupported) {
@@ -317,8 +329,7 @@ export function ScrcpyPlayer({
         decoderRef.current = null;
       }
 
-      // Just clear the reference, let React handle DOM cleanup
-      canvasRef.current = null;
+      detachCanvas();
 
       if (socketRef.current) {
         socketRef.current.disconnect();
@@ -341,7 +352,7 @@ export function ScrcpyPlayer({
       setScreenInfo(null);
       setErrorMessage(null);
     },
-    [deviceId]
+    [deviceId, detachCanvas]
   );
 
   const connectDevice = useCallback(() => {

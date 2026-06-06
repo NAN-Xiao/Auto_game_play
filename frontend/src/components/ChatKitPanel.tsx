@@ -208,6 +208,7 @@ function buildAssistantMessage(
 ): Message {
   const steps = buildExecutionSteps(events);
   let content = task.final_message || task.error_message || '';
+  let retainedHint = '';
 
   for (const event of events) {
     const payload = event.payload;
@@ -229,6 +230,12 @@ function buildAssistantMessage(
       typeof payload.message === 'string'
     ) {
       content = payload.message;
+    } else if (
+      event.event_type === 'experience_retained' &&
+      typeof payload.message === 'string'
+    ) {
+      retainedHint =
+        '本次体验已保留。你可以继续在聊天框输入报告格式、规范和重点内容，我会基于刚才的截图、思考和操作轨迹生成汇报。';
     }
   }
 
@@ -239,6 +246,10 @@ function buildAssistantMessage(
     (task.final_message || task.error_message)
   ) {
     content = task.final_message || task.error_message || content;
+  }
+
+  if (retainedHint && !content.includes(retainedHint)) {
+    content = content ? `${content}\n\n${retainedHint}` : retainedHint;
   }
 
   return {

@@ -46,8 +46,20 @@ export const en = {
     selectAgentType: 'Select Agent Type',
     history_n: 'History Count',
     history_n_hint: 'Number of historical screenshots (1-10)',
+    runLimit: 'Run Limit',
+    runLimitSteps: 'By Steps',
+    runLimitDuration: 'By Duration',
+    runLimitUnlimited: 'Unlimited',
+    runLimitUnlimitedHint:
+      'Tasks keep running until manually stopped or interrupted by an error/safety guard.',
     maxSteps: 'Max Execution Steps',
-    maxStepsHint: 'Maximum steps per task (1-1000)',
+    maxStepsHint:
+      'Applies when running by steps; duration mode will not stop early by step count.',
+    maxStepsRequired: 'Max execution steps is required',
+    maxDuration: 'Max Working Duration (seconds)',
+    maxDurationHint:
+      'Applies when running by duration; max steps will not stop the task early.',
+    maxDurationRequired: 'Max working duration is required',
     visionModelTab: 'Vision Model',
     decisionModelTab: 'Decision Model',
     selectDecisionPreset: 'Select Decision Model Preset',

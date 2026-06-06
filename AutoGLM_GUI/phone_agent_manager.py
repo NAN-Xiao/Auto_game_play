@@ -258,8 +258,23 @@ class PhoneAgentManager:
             model_name=effective_config.model_name,
         )
 
+        run_limit_type = effective_config.run_limit_type
+        max_steps = (
+            effective_config.default_max_steps if run_limit_type == "steps" else None
+        )
+        max_duration_seconds = (
+            effective_config.default_max_duration_seconds
+            if run_limit_type == "duration"
+            else None
+        )
+
         # 使用实际的 device_id 创建 AgentConfig
-        agent_config = AgentConfig(device_id=actual_device_id)
+        agent_config = AgentConfig(
+            device_id=actual_device_id,
+            max_steps=max_steps,
+            run_limit_type=run_limit_type,
+            max_duration_seconds=max_duration_seconds,
+        )
 
         # 调用 factory 方法创建 agent（避免直接依赖 phone_agent）
         agent_specific_config = cast(

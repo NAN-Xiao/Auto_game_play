@@ -17,6 +17,8 @@ from AutoGLM_GUI.task_store import TERMINAL_TASK_STATUSES, task_store
 
 router = APIRouter()
 
+INTERNAL_TASK_EVENT_TYPES = {"experience_segment_summary"}
+
 
 class LayeredAgentRequest(BaseModel):
     """Request for layered agent chat."""
@@ -131,7 +133,7 @@ async def _stream_layered_task(task_id: str) -> AsyncGenerator[str, None]:
         for event in events:
             last_seq = int(event["seq"])
             event_type = str(event["event_type"])
-            if event_type in {"status", "user_message"}:
+            if event_type in {"status", "user_message", *INTERNAL_TASK_EVENT_TYPES}:
                 continue
 
             compat_payload = _compat_sse_payload(event_type, dict(event["payload"]))

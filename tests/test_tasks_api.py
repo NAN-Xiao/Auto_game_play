@@ -66,6 +66,14 @@ class FakeTaskStore:
                 {
                     "task_id": "task-1",
                     "seq": 2,
+                    "event_type": "experience_segment_summary",
+                    "role": "system",
+                    "payload": {"summary": "internal memory only"},
+                    "created_at": "2026-01-01T08:00:02.500000",
+                },
+                {
+                    "task_id": "task-1",
+                    "seq": 3,
                     "event_type": "done",
                     "role": "assistant",
                     "payload": {
@@ -377,6 +385,7 @@ def test_task_detail_and_events(client: TestClient) -> None:
     assert events_resp.status_code == 200
     assert len(events_resp.json()["events"]) == 1
     assert events_resp.json()["events"][0]["event_type"] == "done"
+    assert "internal memory only" not in events_resp.text
 
 
 def test_task_stream_and_cancel(client: TestClient) -> None:
@@ -385,6 +394,7 @@ def test_task_stream_and_cancel(client: TestClient) -> None:
     assert stream_resp.headers["content-type"].startswith("text/event-stream")
     assert "event: step" in stream_resp.text
     assert '"message": "已打开设置"' in stream_resp.text
+    assert "internal memory only" not in stream_resp.text
 
     cancel_resp = client.post("/api/tasks/task-2/cancel")
     assert cancel_resp.status_code == 200

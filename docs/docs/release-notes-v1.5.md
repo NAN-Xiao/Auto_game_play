@@ -128,7 +128,7 @@ description: AutoGLM-GUI v1.4.1 到 v1.5.5 的完整更新日志和特性说明
 
 **Electron 打包运行时依赖问题 (#182)**
 - 修复打包后 "Cannot find module 'electron-updater'" 错误
-- 正确使用 npm（而非 pnpm）管理 Electron 依赖
+- 正确使用 npm 管理 Electron 依赖
 - 修复预构建脚本引用
 - 改进运行时依赖验证系统
 

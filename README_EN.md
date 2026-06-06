@@ -331,7 +331,7 @@ Execute saved Workflows in Chat interface:
 uv run autoglm-gui --base-url http://localhost:8080/v1 --reload
 
 # Frontend dev server (hot reload)
-cd frontend && pnpm dev
+cd frontend && npm run dev
 ```
 
 ### Build and Package

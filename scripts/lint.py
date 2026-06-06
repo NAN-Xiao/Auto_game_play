@@ -28,7 +28,7 @@ class AutoGLMLinter:
     """AutoGLM-GUI 统一代码检查器"""
 
     # Windows 上需要通过 shell 执行的 Node.js 包管理器命令
-    _NODE_PACKAGE_MANAGERS = frozenset(["pnpm", "npm", "yarn", "npx"])
+    _NODE_PACKAGE_MANAGERS = frozenset(["npm", "yarn", "npx"])
 
     def __init__(self, root_dir: Path):
         self.root_dir = root_dir
@@ -93,7 +93,7 @@ class AutoGLMLinter:
                 output="跳过: 前端目录不存在",
             )
 
-        cmd = ["pnpm", "lint"]
+        cmd = ["npm", "run", "lint"]
         if fix:
             cmd.append("--fix")
 
@@ -118,7 +118,7 @@ class AutoGLMLinter:
                 output="跳过: 前端目录不存在",
             )
 
-        cmd = ["pnpm", "format:check" if check_only else "format"]
+        cmd = ["npm", "run", "format:check" if check_only else "format"]
 
         print(f"🎨 运行: {' '.join(cmd)} (前端)")
         result = self.run_command(cmd, self.frontend_dir)
@@ -146,7 +146,7 @@ class AutoGLMLinter:
                 output="跳过: 前端目录不存在",
             )
 
-        cmd = ["pnpm", "type-check"]
+        cmd = ["npm", "run", "type-check"]
 
         print(f"🔷 运行: {' '.join(cmd)} (前端)")
         result = self.run_command(cmd, self.frontend_dir)
@@ -339,7 +339,7 @@ class AutoGLMLinter:
                 print("   - 运行不带 --check-only 参数来自动修复一些问题")
             print("   - 检查上面的详细错误信息")
             print("   - 确保已安装所有依赖:")
-            print("     前端: cd frontend && pnpm install")
+            print("     前端: cd frontend && npm install")
             print("     后端: uv sync")
             print("   - 或者直接运行: uv run python scripts/lint.py")
 

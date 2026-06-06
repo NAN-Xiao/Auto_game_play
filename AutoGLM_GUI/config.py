@@ -9,7 +9,10 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+
+RunLimitType = Literal["steps", "duration", "unlimited"]
 
 
 @dataclass
@@ -49,6 +52,8 @@ class AgentConfig:
 
     Attributes:
         max_steps: 单次任务最大执行步数，None 表示不限制
+        run_limit_type: 运行上限类型，steps/duration/unlimited 三选一
+        max_duration_seconds: 单次任务最大运行时长，None 表示不限制
         device_id: 设备标识符 (USB serial 或 IP:port)
         lang: 语言设置 'cn' 或 'en'
         system_prompt: 自定义系统提示词 (None 则使用默认)
@@ -56,6 +61,8 @@ class AgentConfig:
     """
 
     max_steps: int | None = 100
+    run_limit_type: RunLimitType = "steps"
+    max_duration_seconds: int | None = None
     device_id: str | None = None
     lang: str = "cn"
     system_prompt: str | None = None

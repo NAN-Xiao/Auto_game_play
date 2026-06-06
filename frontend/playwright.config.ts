@@ -12,7 +12,7 @@ export default defineConfig({
   },
   webServer: {
     // Only Vite dev server — backend services are managed by globalSetup
-    command: 'pnpm dev',
+    command: 'npm run dev',
     url: 'http://localhost:3000',
     timeout: 30000,
     reuseExistingServer: true,

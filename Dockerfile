@@ -8,15 +8,12 @@ FROM node:20.20.2-slim AS frontend
 
 WORKDIR /app
 
-# Enable corepack for pnpm
-RUN corepack enable
-
 # Copy frontend source
 COPY frontend ./frontend
 
 # Install dependencies and build
 WORKDIR /app/frontend
-RUN pnpm install --frozen-lockfile && pnpm build
+RUN npm ci && npm run build
 
 # ============================================
 # Stage 2: Build Backend

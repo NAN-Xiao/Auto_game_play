@@ -450,3 +450,347 @@ def test_submit_chat_task_uses_layered_executor_for_layered_sessions(
         store.close()
 
     asyncio.run(scenario())
+
+
+def test_report_request_detection_avoids_plain_app_operations() -> None:
+    assert TaskManager._looks_like_report_request("请按缺陷、亮点输出报告") is True
+    assert TaskManager._looks_like_report_request("open the report page") is False
+    assert TaskManager._looks_like_report_request("打开报告页面") is False
+
+
+def test_followup_report_request_uses_retained_experience_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import AutoGLM_GUI.experience_report as experience_report_module
+
+    async def fake_generate_experience_report(*, report_request, context):
+        assert report_request == "请按缺陷、亮点、建议输出报告"
+        assert "experience goal" in context.text
+        assert "# Segment Summaries" in context.text
+        assert "segment summary: tap login" in context.text
+        return "generated report"
+
+    async def fake_generate_experience_segment_summary(
+        *,
+        source_task,
+        start_step,
+        end_step,
+        segment_text,
+    ):
+        assert source_task["input_text"] == "experience goal"
+        assert (start_step, end_step) == (1, 1)
+        assert "tap login" in segment_text
+        return "segment summary: tap login"
+
+    monkeypatch.setattr(
+        experience_report_module,
+        "generate_experience_report",
+        fake_generate_experience_report,
+    )
+    monkeypatch.setattr(
+        experience_report_module,
+        "generate_experience_segment_summary",
+        fake_generate_experience_segment_summary,
+    )
+
+    async def scenario() -> None:
+        store = TaskStore(tmp_path / "tasks.db")
+        manager = TaskManager(store)
+        monkeypatch.setattr(manager, "_ensure_worker", lambda device_id: None)
+        session = await manager.create_chat_session(
+            device_id="device-a",
+            device_serial="serial-a",
+            mode="classic",
+        )
+        source_task = store.create_task_run(
+            source="chat",
+            executor_key="classic_chat",
+            session_id=session["id"],
+            device_id="device-a",
+            device_serial="serial-a",
+            input_text="experience goal",
+        )
+        store.append_event(
+            task_id=source_task["id"],
+            event_type="step",
+            payload={
+                "step": 1,
+                "thinking": "check current screen",
+                "action": {"action": "tap login"},
+                "success": True,
+                "finished": False,
+                "screenshot": "c2NyZWVu",
+            },
+        )
+        store.update_task_terminal(
+            task_id=source_task["id"],
+            status=TaskStatus.CANCELLED.value,
+            final_message="Task cancelled by user",
+            error_message="Task cancelled by user",
+            stop_reason="user_stopped",
+            step_count=1,
+        )
+
+        report_task = await manager.submit_chat_task(
+            session_id=session["id"],
+            device_id="device-a",
+            device_serial="serial-a",
+            message="请按缺陷、亮点、建议输出报告",
+        )
+        assert report_task["executor_key"] == "experience_report"
+
+        task = store.get_task(report_task["id"])
+        assert task is not None
+        await manager._execute_experience_report(task)
+
+        completed = store.get_task(report_task["id"])
+        assert completed is not None
+        assert completed["status"] == TaskStatus.SUCCEEDED.value
+        assert completed["stop_reason"] == "report_generated"
+        assert completed["final_message"] == "generated report"
+        assert completed["step_count"] == 0
+        events = store.list_task_events(report_task["id"])
+        assert any(
+            event["event_type"] == "experience_report_source" for event in events
+        )
+        assert any(
+            event["event_type"] == "experience_report_context" for event in events
+        )
+        context_event = next(
+            event
+            for event in events
+            if event["event_type"] == "experience_report_context"
+        )
+        assert context_event["payload"]["source_step_count"] == 1
+        assert context_event["payload"]["segment_summary_count"] == 1
+        source_events = store.list_task_events(source_task["id"])
+        source_summary = next(
+            event
+            for event in source_events
+            if event["event_type"] == "experience_segment_summary"
+        )
+        assert source_summary["role"] == "system"
+        assert source_summary["payload"]["summary"] == "segment summary: tap login"
+        assert any(
+            event["event_type"] == "message"
+            and event["payload"]["content"] == "generated report"
+            for event in events
+        )
+
+        await manager.shutdown()
+        store.close()
+
+    asyncio.run(scenario())
+
+
+def test_experience_summary_runs_in_background_on_step_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    async def fake_ensure_experience_segment_summaries(
+        *,
+        store,
+        source_task,
+        segment_step_size=30,
+        include_partial_segment=True,
+    ):
+        _ = (store, segment_step_size)
+        calls.append((source_task["id"], include_partial_segment))
+        await asyncio.sleep(0)
+        return []
+
+    monkeypatch.setattr(
+        "AutoGLM_GUI.experience_report.ensure_experience_segment_summaries",
+        fake_ensure_experience_segment_summaries,
+    )
+
+    async def scenario() -> None:
+        store = TaskStore(tmp_path / "tasks.db")
+        manager = TaskManager(store)
+        session = store.create_session(
+            kind="chat",
+            mode="classic",
+            device_id="device-a",
+            device_serial="serial-a",
+        )
+        source_task = store.create_task_run(
+            source="chat",
+            executor_key="classic_chat",
+            session_id=session["id"],
+            device_id="device-a",
+            device_serial="serial-a",
+            input_text="experience",
+        )
+
+        manager._schedule_experience_summary_for_progress(
+            task=source_task,
+            previous_step_count=29,
+            current_step_count=30,
+        )
+
+        assert str(source_task["id"]) in manager._experience_summary_tasks
+        await asyncio.gather(*manager._experience_summary_tasks.values())
+        assert calls == [(source_task["id"], False)]
+
+        await manager.shutdown()
+        store.close()
+
+    asyncio.run(scenario())
+
+
+def test_experience_summary_generation_is_globally_limited(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = 0
+    max_active = 0
+
+    async def fake_ensure_experience_segment_summaries(
+        *,
+        store,
+        source_task,
+        segment_step_size=30,
+        include_partial_segment=True,
+    ):
+        nonlocal active, max_active
+        _ = (store, source_task, segment_step_size, include_partial_segment)
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.05)
+        active -= 1
+        return []
+
+    monkeypatch.setattr(
+        "AutoGLM_GUI.experience_report.ensure_experience_segment_summaries",
+        fake_ensure_experience_segment_summaries,
+    )
+
+    async def scenario() -> None:
+        store = TaskStore(tmp_path / "tasks.db")
+        manager = TaskManager(store)
+        session = store.create_session(
+            kind="chat",
+            mode="classic",
+            device_id="device-a",
+            device_serial="serial-a",
+        )
+        tasks = [
+            store.create_task_run(
+                source="chat",
+                executor_key="classic_chat",
+                session_id=session["id"],
+                device_id="device-a",
+                device_serial="serial-a",
+                input_text=f"experience {idx}",
+            )
+            for idx in range(2)
+        ]
+
+        await asyncio.gather(
+            *[
+                manager._ensure_experience_summaries_ready(source_task)
+                for source_task in tasks
+            ]
+        )
+
+        assert max_active == 1
+
+        await manager.shutdown()
+        store.close()
+
+    asyncio.run(scenario())
+
+
+def test_report_waiting_for_background_summary_emits_status_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_generate_experience_report(*, report_request, context):
+        _ = (report_request, context)
+        return "generated report"
+
+    async def fake_ensure_experience_segment_summaries(
+        *,
+        store,
+        source_task,
+        segment_step_size=30,
+        include_partial_segment=True,
+    ):
+        _ = (store, source_task, segment_step_size, include_partial_segment)
+        await asyncio.sleep(0)
+        return [
+            {
+                "version": "v1",
+                "start_step": 1,
+                "end_step": 1,
+                "summary": "ready",
+                "screenshot_refs": [],
+            }
+        ]
+
+    monkeypatch.setattr(
+        "AutoGLM_GUI.experience_report.generate_experience_report",
+        fake_generate_experience_report,
+    )
+    monkeypatch.setattr(
+        "AutoGLM_GUI.experience_report.ensure_experience_segment_summaries",
+        fake_ensure_experience_segment_summaries,
+    )
+
+    async def scenario() -> None:
+        store = TaskStore(tmp_path / "tasks.db")
+        manager = TaskManager(store)
+        monkeypatch.setattr(manager, "_ensure_worker", lambda device_id: None)
+        session = await manager.create_chat_session(
+            device_id="device-a",
+            device_serial="serial-a",
+            mode="classic",
+        )
+        source_task = store.create_task_run(
+            source="chat",
+            executor_key="classic_chat",
+            session_id=session["id"],
+            device_id="device-a",
+            device_serial="serial-a",
+            input_text="experience goal",
+        )
+        store.append_event(
+            task_id=source_task["id"],
+            event_type="step",
+            payload={"step": 1, "thinking": "check", "success": True},
+        )
+        store.update_task_terminal(
+            task_id=source_task["id"],
+            status=TaskStatus.CANCELLED.value,
+            final_message="Task cancelled by user",
+            error_message="Task cancelled by user",
+            stop_reason="user_stopped",
+            step_count=1,
+        )
+        background_task = asyncio.create_task(asyncio.sleep(0.05))
+        manager._experience_summary_tasks[source_task["id"]] = background_task
+
+        report_task = await manager.submit_chat_task(
+            session_id=session["id"],
+            device_id="device-a",
+            device_serial="serial-a",
+            message="请输出报告",
+        )
+        task = store.get_task(report_task["id"])
+        assert task is not None
+        await manager._execute_experience_report(task)
+
+        messages = [
+            event["payload"]["content"]
+            for event in store.list_task_events(report_task["id"])
+            if event["event_type"] == "message"
+        ]
+        assert "正在整理体验记忆并生成报告..." in messages
+        assert "generated report" in messages
+
+        await manager.shutdown()
+        store.close()
+
+    asyncio.run(scenario())

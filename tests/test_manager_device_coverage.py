@@ -508,6 +508,7 @@ def test_task_manager_classic_chat_execution_paths(
     assert "thinking" in event_types
     assert "step" in event_types
     assert "done" in event_types
+    assert "experience_retained" in event_types
 
     no_attachment_agent = SimpleNamespace(cancel=lambda: None)
 

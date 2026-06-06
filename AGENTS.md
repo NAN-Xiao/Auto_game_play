@@ -9,13 +9,13 @@
 
 ## Setup
 - Required Python: `>=3.11` (from `pyproject.toml`).
-- Required Node/pnpm: Node.js `18+` and `pnpm` (from `CONTRIBUTING.md`); CI commonly runs Node `24` (from `.github/workflows/pr-lint.yml`).
+- Required Node/npm: Node.js `18+` and `npm`; CI commonly runs Node `24` (from `.github/workflows/pr-lint.yml`).
 - Required tools: `uv` (dependency sync and task runner), `adb` in PATH (from `CONTRIBUTING.md`).
 - Install backend dependencies (repo root): `uv sync`
-- Install frontend dependencies: `cd frontend && pnpm install`
-- Optional Electron dependencies (when working on desktop app): `cd electron && pnpm install`
+- Install frontend dependencies: `cd frontend && npm install`
+- Optional Electron dependencies (when working on desktop app): `cd electron && npm install`
 - Start backend dev server: `uv run autoglm-gui --base-url http://localhost:8080/v1 --reload`
-- Start frontend dev server: `cd frontend && pnpm dev`
+- Start frontend dev server: `cd frontend && npm run dev`
 
 ## Commands
 ### Lint
@@ -27,12 +27,12 @@
 - Full auto-fix (backend + frontend): `uv run python scripts/lint.py`
 - Backend format check: `uv run ruff format --check --diff`
 - Backend format apply: `uv run ruff format`
-- Frontend format check: `cd frontend && pnpm format:check`
-- Frontend format apply: `cd frontend && pnpm format`
+- Frontend format check: `cd frontend && npm run format:check`
+- Frontend format apply: `cd frontend && npm run format`
 
 ### Typecheck
 - Backend typecheck: `uv run pyright AutoGLM_GUI/`
-- Frontend typecheck: `cd frontend && pnpm type-check`
+- Frontend typecheck: `cd frontend && npm run type-check`
 
 ### Unit tests
 - TODO: 未找到“仅单元测试”的专用命令（已检查 `README.md`、`CONTRIBUTING.md`、`pyproject.toml`、`tests/`、`.github/workflows/integration-tests.yml`）。
@@ -44,7 +44,7 @@
 ### Build
 - Build frontend + copy to backend static: `uv run python scripts/build.py`
 - Build package (includes wheel build): `uv run python scripts/build.py --pack`
-- Frontend-only build path: `cd frontend && pnpm build`
+- Frontend-only build path: `cd frontend && npm run build`
 - Electron app build (CI mode): `uv run python scripts/build_electron.py --publish never`
 - Docker compose runtime (deploy-style): `docker-compose up -d`
 
@@ -78,7 +78,7 @@
 
 ### Don’t
 - Don’t perform broad refactors unrelated to the task.
-- Don’t introduce new dependencies/toolchains if existing `uv`/`pnpm` scripts already solve the problem.
+- Don’t introduce new dependencies/toolchains if existing `uv`/`npm` scripts already solve the problem.
 - Don’t change public API/CLI behavior (e.g., `autoglm-gui` options) unless explicitly requested.
 - Don’t edit CI workflow semantics unless the task is CI-related.
 
