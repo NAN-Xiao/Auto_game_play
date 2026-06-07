@@ -160,6 +160,7 @@ class FakeTaskManager:
         self.store = store
         self.waited_task_ids: list[str] = []
         self.submitted_attachments: list[dict[str, object]] = []
+        self.submitted_experience: dict[str, object] | None = None
         self.sessions: dict[str, dict[str, object]] = {
             "session-1": {
                 "id": "session-1",
@@ -200,8 +201,10 @@ class FakeTaskManager:
         device_serial: str,
         message: str,
         attachments: list[dict[str, object]] | None = None,
+        experience: dict[str, object] | None = None,
     ) -> dict[str, object]:
         self.submitted_attachments = attachments or []
+        self.submitted_experience = experience
         task = {
             "id": "task-3",
             "source": "chat",
@@ -322,6 +325,31 @@ def test_task_session_submit_accepts_image_attachments(client: TestClient) -> No
     ]
 
 
+def test_task_session_submit_accepts_experience_payload(client: TestClient) -> None:
+    submit_resp = client.post(
+        "/api/task-sessions/session-1/tasks",
+        json={
+            "message": "体验一下这个游戏",
+            "experience": {
+                "goal": "体验一下这个游戏",
+                "auto_generate_report": True,
+                "plan": {
+                    "execution_goal": "体验一下这个游戏",
+                    "observation_targets": ["任务内容"],
+                    "analysis_lenses": ["任务难度曲线"],
+                    "evaluation_dimensions": ["系统设计"],
+                    "report_request": "输出任务难度分析",
+                    "stop_conditions": ["覆盖关键任务节点后停止"],
+                    "sampling_strategy": ["记录关键任务截图"],
+                },
+            },
+        },
+    )
+
+    assert submit_resp.status_code == 200
+    assert client.fake_task_manager.submitted_experience["plan"]["report_request"] == "输出任务难度分析"  # type: ignore[attr-defined]
+
+
 def test_task_session_supports_layered_mode(client: TestClient) -> None:
     create_resp = client.post(
         "/api/task-sessions",
@@ -383,9 +411,10 @@ def test_task_detail_and_events(client: TestClient) -> None:
 
     events_resp = client.get("/api/tasks/task-1/events", params={"after_seq": 1})
     assert events_resp.status_code == 200
-    assert len(events_resp.json()["events"]) == 1
-    assert events_resp.json()["events"][0]["event_type"] == "done"
-    assert "internal memory only" not in events_resp.text
+    assert len(events_resp.json()["events"]) == 2
+    assert events_resp.json()["events"][0]["event_type"] == "experience_stage_summary"
+    assert events_resp.json()["events"][1]["event_type"] == "done"
+    assert "internal memory only" in events_resp.text
 
 
 def test_task_stream_and_cancel(client: TestClient) -> None:
@@ -394,7 +423,8 @@ def test_task_stream_and_cancel(client: TestClient) -> None:
     assert stream_resp.headers["content-type"].startswith("text/event-stream")
     assert "event: step" in stream_resp.text
     assert '"message": "已打开设置"' in stream_resp.text
-    assert "internal memory only" not in stream_resp.text
+    assert "event: experience_stage_summary" in stream_resp.text
+    assert "internal memory only" in stream_resp.text
 
     cancel_resp = client.post("/api/tasks/task-2/cancel")
     assert cancel_resp.status_code == 200

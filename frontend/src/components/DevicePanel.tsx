@@ -12,6 +12,7 @@ import {
   ImagePlus,
   X,
   Hand,
+  ClipboardList,
 } from 'lucide-react';
 import { DeviceMonitor } from './DeviceMonitor';
 import type {
@@ -51,6 +52,7 @@ import {
   type TaskConversationMessage,
 } from '../hooks/useTaskSessionConversation';
 import { MarkdownContent } from './MarkdownContent';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface ActionPayload {
   action?: string;
@@ -220,6 +222,9 @@ export function DevicePanel({
 }: DevicePanelProps) {
   const t = useTranslation();
   const [input, setInput] = useState('');
+  const [interactionMode, setInteractionMode] = useState<'chat' | 'experience'>(
+    'chat'
+  );
   const [attachments, setAttachments] = useState<TaskImageAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [isDraggingAttachment, setIsDraggingAttachment] = useState(false);
@@ -240,9 +245,13 @@ export function DevicePanel({
     interactionPrompt,
     error,
     sessionReady,
+    experienceStage,
+    experiencePlan,
+    experienceQuestion,
     sendMessage,
     resetConversation,
     abortConversation,
+    confirmExperiencePlan,
   } = useTaskSessionConversation({
     deviceId,
     deviceSerial,
@@ -533,13 +542,17 @@ export function DevicePanel({
   }, []);
 
   const handleSend = useCallback(async () => {
-    const didSend = await sendMessage(input, attachments);
+    const didSend = await sendMessage(input, attachments, {
+      experienceMode: interactionMode === 'experience',
+    });
     if (didSend) {
       setInput('');
-      setAttachments([]);
-      setAttachmentError(null);
+      if (interactionMode === 'chat') {
+        setAttachments([]);
+        setAttachmentError(null);
+      }
     }
-  }, [attachments, input, sendMessage]);
+  }, [attachments, input, interactionMode, sendMessage]);
 
   const handleReset = useCallback(async () => {
     await resetConversation();
@@ -554,6 +567,15 @@ export function DevicePanel({
   const handleAbortChat = useCallback(async () => {
     await abortConversation();
   }, [abortConversation]);
+
+  const handleConfirmExperience = useCallback(async () => {
+    const didConfirm = await confirmExperiencePlan();
+    if (didConfirm) {
+      setInput('');
+      setAttachments([]);
+      setAttachmentError(null);
+    }
+  }, [confirmExperiencePlan]);
 
   useEffect(() => {
     const latest = messages[messages.length - 1];
@@ -781,6 +803,71 @@ export function DevicePanel({
           </div>
         )}
 
+        <div className="px-4 pt-4">
+          <Tabs
+            value={interactionMode}
+            onValueChange={value =>
+              setInteractionMode(value === 'experience' ? 'experience' : 'chat')
+            }
+          >
+            <TabsList className="grid w-full max-w-sm grid-cols-2">
+              <TabsTrigger value="chat">普通对话</TabsTrigger>
+              <TabsTrigger value="experience">体验任务</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+
+        {interactionMode === 'experience' && experiencePlan && (
+          <div className="mx-4 mt-4 rounded-2xl border border-sky-200 bg-sky-50/80 p-4 dark:border-sky-900/60 dark:bg-sky-950/20">
+            <div className="flex items-center gap-2 text-sky-700 dark:text-sky-300">
+              <ClipboardList className="h-4 w-4" />
+              <span className="text-sm font-medium">
+                {experienceStage === 'running'
+                  ? '已确认体验委托'
+                  : '体验任务草案'}
+              </span>
+            </div>
+            <div className="mt-3 space-y-3 text-sm text-slate-700 dark:text-slate-200">
+              <div>
+                <p className="font-medium">体验目标</p>
+                <p>{experiencePlan.execution_goal}</p>
+              </div>
+              <div>
+                <p className="font-medium">重点观察</p>
+                <p>{experiencePlan.observation_targets.join(' / ')}</p>
+              </div>
+              <div>
+                <p className="font-medium">分析方法</p>
+                <p>{experiencePlan.analysis_lenses.join(' / ')}</p>
+              </div>
+              <div>
+                <p className="font-medium">评估维度</p>
+                <p>{experiencePlan.evaluation_dimensions.join(' / ')}</p>
+              </div>
+              <div>
+                <p className="font-medium">最终输出</p>
+                <p>{experiencePlan.report_request}</p>
+              </div>
+              <div>
+                <p className="font-medium">停止条件</p>
+                <p>{experiencePlan.stop_conditions.join(' / ')}</p>
+              </div>
+              {experienceQuestion && experienceStage !== 'running' && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                  {experienceQuestion}
+                </div>
+              )}
+              {experienceStage === 'awaiting_confirmation' && (
+                <div className="flex justify-end">
+                  <Button onClick={handleConfirmExperience} variant="twitter">
+                    确认并开始
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Messages */}
         <div className="flex-1 min-h-0 relative">
           <ScrollArea
@@ -810,7 +897,17 @@ export function DevicePanel({
                       message.role === 'user' ? 'justify-end' : 'justify-start'
                     }`}
                   >
-                    {message.role === 'assistant' ? (
+                    {message.role === 'assistant' && message.eventType === 'experience_plan' ? (
+                      <div className="max-w-[85%] rounded-2xl rounded-tl-sm border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-slate-700 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-slate-200">
+                        <div className="flex items-center gap-2 text-sky-700 dark:text-sky-300">
+                          <ClipboardList className="h-4 w-4" />
+                          <span className="font-medium">草案已更新</span>
+                        </div>
+                        <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                          继续用自然语言补充，或直接确认开始执行。
+                        </div>
+                      </div>
+                    ) : message.role === 'assistant' ? (
                       <div className="max-w-[85%] space-y-3">
                         {/* Step process */}
                         {Array.from(
@@ -1314,6 +1411,7 @@ export function DevicePanel({
                 size="icon"
                 variant="twitter"
                 className="h-10 w-10 rounded-full flex-shrink-0"
+                title={interactionMode === 'experience' ? '生成体验草案' : '发送'}
               >
                 <Send className="h-4 w-4" />
               </Button>

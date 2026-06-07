@@ -880,9 +880,67 @@ class TaskImageAttachment(BaseModel):
         return len(base64.b64decode(self.data, validate=True))
 
 
+class ExperiencePlan(BaseModel):
+    execution_goal: str
+    observation_targets: list[str] = Field(default_factory=list)
+    analysis_lenses: list[str] = Field(default_factory=list)
+    evaluation_dimensions: list[str] = Field(default_factory=list)
+    report_request: str
+    stop_conditions: list[str] = Field(default_factory=list)
+    sampling_strategy: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "execution_goal",
+        "report_request",
+    )
+    @classmethod
+    def validate_plan_text(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("plan text cannot be empty")
+        return value
+
+
+class ExperiencePlanRequest(BaseModel):
+    messages: list[str] = Field(default_factory=list)
+
+    @field_validator("messages")
+    @classmethod
+    def validate_messages(cls, v: list[str]) -> list[str]:
+        cleaned = [message.strip() for message in v if message.strip()]
+        if not cleaned:
+            raise ValueError("at least one message is required")
+        return cleaned
+
+
+class ExperiencePlanResponse(BaseModel):
+    stage: str
+    plan: ExperiencePlan
+    question: str | None = None
+    missing_fields: list[str] = Field(default_factory=list)
+    conversation: list[str] = Field(default_factory=list)
+
+
+class ExperienceExecutionPayload(BaseModel):
+    goal: str
+    plan: ExperiencePlan
+    auto_generate_report: bool = True
+
+    @field_validator("goal")
+    @classmethod
+    def validate_goal(cls, v: str) -> str:
+        goal = v.strip()
+        if not goal:
+            raise ValueError("goal cannot be empty")
+        if len(goal) > 20000:
+            raise ValueError("goal too long (max 20000 characters)")
+        return goal
+
+
 class TaskSubmitRequest(BaseModel):
     message: str = ""
     attachments: list[TaskImageAttachment] = Field(default_factory=list)
+    experience: ExperienceExecutionPayload | None = None
 
     @field_validator("message")
     @classmethod
@@ -902,8 +960,8 @@ class TaskSubmitRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_message_or_attachment(self) -> "TaskSubmitRequest":
-        if not self.message and not self.attachments:
-            raise ValueError("message or image attachment is required")
+        if not self.message and not self.attachments and self.experience is None:
+            raise ValueError("message, image attachment, or experience payload is required")
         total_bytes = sum(attachment.byte_size() for attachment in self.attachments)
         if total_bytes > TASK_IMAGE_ATTACHMENT_MAX_TOTAL_BYTES:
             raise ValueError("images too large in total (max 12 MiB)")

@@ -23,6 +23,7 @@ import AutoGLM_GUI.trace as trace_module
 
 TaskExecutor = Callable[[TaskRecord], Awaitable[None]]
 TaskImageAttachment = dict[str, Any]
+TaskExperiencePayload = dict[str, Any]
 EXPERIENCE_SUMMARY_MAX_CONCURRENCY = 1
 
 
@@ -145,6 +146,7 @@ class TaskManager:
         device_serial: str,
         message: str,
         attachments: list[TaskImageAttachment] | None = None,
+        experience: TaskExperiencePayload | None = None,
     ) -> TaskRecord:
         session = await self.get_session(session_id)
         if session is None:
@@ -159,7 +161,7 @@ class TaskManager:
             raise ValueError(f"Unsupported session mode: {session_mode}")
 
         source_task: TaskRecord | None = None
-        if self._looks_like_report_request(message.strip().lower()):
+        if experience is None and self._looks_like_report_request(message.strip().lower()):
             source_task = await asyncio.to_thread(
                 self.store.get_latest_reportable_session_task,
                 session_id,
@@ -184,6 +186,7 @@ class TaskManager:
             payload={
                 "message": message,
                 "attachments": attachments or [],
+                "experience": experience,
             },
         )
         if source_task is not None:
@@ -299,6 +302,66 @@ class TaskManager:
                 and isinstance(attachment.get("data"), str)
             ]
         return []
+
+    def _get_task_experience_payload(
+        self, task_id: str
+    ) -> TaskExperiencePayload | None:
+        events = self.store.list_task_events(task_id)
+        for event in events:
+            if event["event_type"] != "user_message":
+                continue
+            payload = event.get("payload", {})
+            experience = payload.get("experience")
+            if isinstance(experience, dict):
+                return dict(experience)
+            return None
+        return None
+
+    @staticmethod
+    def _build_experience_execution_input(
+        original_goal: str,
+        experience: TaskExperiencePayload,
+    ) -> str:
+        plan = experience.get("plan")
+        if not isinstance(plan, dict):
+            return original_goal
+
+        def _list_lines(values: Any) -> list[str]:
+            if not isinstance(values, list):
+                return []
+            return [f"- {str(value)}" for value in values if str(value).strip()]
+
+        sections = [
+            "你现在在执行一次 Android 应用/游戏体验任务。",
+            "请围绕下面已经确认的体验委托去探索、观察、取证，并在关键节点形成稳定结论。",
+            "",
+            f"原始委托：{original_goal}",
+            f"体验目标：{str(plan.get('execution_goal') or original_goal)}",
+            "",
+            "重点观察：",
+            *(_list_lines(plan.get("observation_targets")) or ["- 关键页面变化"]),
+            "",
+            "分析方法：",
+            *(_list_lines(plan.get("analysis_lenses")) or ["- 关键问题归纳"]),
+            "",
+            "评估维度：",
+            *(_list_lines(plan.get("evaluation_dimensions")) or ["- 综合体验"]),
+            "",
+            "输出要求：",
+            f"- {str(plan.get('report_request') or '输出体验分析报告')}",
+            "",
+            "停止条件：",
+            *(_list_lines(plan.get("stop_conditions")) or ["- 覆盖关键路径后停止"]),
+            "",
+            "取证策略：",
+            *(_list_lines(plan.get("sampling_strategy")) or ["- 保留关键截图与证据"]),
+            "",
+            "执行要求：",
+            "- 优先覆盖和委托目标直接相关的关键路径，不要盲目扩散。",
+            "- 遇到关键文案、数值、付费点、任务节点时要重点观察。",
+            "- 完成关键覆盖后可以结束任务，后续会基于你的轨迹自动生成报告。",
+        ]
+        return "\n".join(section for section in sections if section is not None)
 
     async def enqueue_scheduled_task(
         self,
@@ -572,6 +635,10 @@ class TaskManager:
     async def _execute_classic_chat(self, task: TaskRecord) -> None:
         from AutoGLM_GUI.exceptions import AgentInitializationError, DeviceBusyError
         from AutoGLM_GUI.phone_agent_manager import PhoneAgentManager
+        from AutoGLM_GUI.experience_report import (
+            build_experience_report_context,
+            generate_experience_report,
+        )
 
         manager = PhoneAgentManager.get_instance()
         task_id = task["id"]
@@ -586,6 +653,7 @@ class TaskManager:
         stop_reason = "error"
         step_count = 0
         abort_registered = False
+        experience_payload: TaskExperiencePayload | None = None
 
         try:
             with trace_module.trace_context(trace_id):
@@ -608,6 +676,10 @@ class TaskManager:
                 )
                 user_image_attachments = await asyncio.to_thread(
                     self._get_task_user_image_attachments,
+                    task_id,
+                )
+                experience_payload = await asyncio.to_thread(
+                    self._get_task_experience_payload,
                     task_id,
                 )
                 image_attachment_setter: (
@@ -659,8 +731,16 @@ class TaskManager:
                         sig = inspect.signature(agent.stream)
                         if "continue_with" in sig.parameters:
                             stream_kwargs["continue_with"] = task["input_text"]
+                    prompt_input = (
+                        self._build_experience_execution_input(
+                            str(task["input_text"]),
+                            experience_payload,
+                        )
+                        if experience_payload is not None
+                        else str(task["input_text"])
+                    )
                     async for event in agent.stream(
-                        task["input_text"],
+                        prompt_input,
                         **stream_kwargs,
                     ):
                         event_type = event["type"]
@@ -801,6 +881,57 @@ class TaskManager:
             trace_id=trace_id,
             replay_source="classic_chat",
         )
+
+        if (
+            experience_payload is not None
+            and final_status in {TaskStatus.SUCCEEDED.value, TaskStatus.CANCELLED.value}
+            and experience_payload.get("auto_generate_report", True)
+        ):
+            summaries = await self._ensure_experience_summaries_ready(
+                task,
+                trace_id=trace_id,
+            )
+            context = await asyncio.to_thread(
+                build_experience_report_context,
+                store=self.store,
+                source_task=task,
+            )
+            report_request = ""
+            plan = experience_payload.get("plan")
+            if isinstance(plan, dict):
+                report_request = str(plan.get("report_request") or "").strip()
+            report_request = report_request or "输出一份包含结论、依据和风险的体验分析报告"
+            await self._append_task_event(
+                task_id=task_id,
+                event_type="experience_report_context",
+                payload={
+                    "source_task_id": str(task["id"]),
+                    "source_status": final_status,
+                    "source_stop_reason": stop_reason,
+                    "source_step_count": step_count,
+                    "segment_summary_count": len(summaries),
+                    "context_chars": len(context.text),
+                },
+                role="system",
+                trace_id=trace_id,
+                replay_source="classic_chat",
+                task=task,
+            )
+            report = await generate_experience_report(
+                report_request=report_request,
+                context=context,
+            )
+            if report:
+                final_message = report
+                await self._append_task_event(
+                    task_id=task_id,
+                    event_type="experience_report",
+                    payload={"content": report},
+                    role="assistant",
+                    trace_id=trace_id,
+                    replay_source="classic_chat",
+                    task=task,
+                )
 
         await self._finalize_traced_task(
             task_id=task_id,

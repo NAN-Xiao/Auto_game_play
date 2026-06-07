@@ -7,6 +7,8 @@ import {
   type SetStateAction,
 } from 'react';
 import type {
+  ExperienceExecutionPayload,
+  ExperiencePlan,
   ModelErrorDetails,
   StepTimingSummary,
   TaskEventRecordResponse,
@@ -16,6 +18,7 @@ import type {
 } from '../api';
 import {
   cancelTaskRun,
+  createExperiencePlan,
   createTaskSession,
   getTaskSession,
   listTaskEvents,
@@ -24,8 +27,8 @@ import {
   submitTaskSessionTask,
 } from '../api';
 import {
-  isInteractionRequired,
   getInteractionPrompt,
+  isInteractionRequired,
 } from '../lib/interaction-config';
 
 export interface TaskConversationMessage {
@@ -44,6 +47,8 @@ export interface TaskConversationMessage {
   isStreaming?: boolean;
   currentThinking?: string;
   attachments?: TaskImageAttachment[];
+  eventType?: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface UseTaskSessionConversationOptions {
@@ -52,6 +57,14 @@ interface UseTaskSessionConversationOptions {
   sessionStorageKey: string;
   agentType?: string;
 }
+
+type ExperienceConversationStage =
+  | 'idle'
+  | 'drafting'
+  | 'asking'
+  | 'awaiting_confirmation'
+  | 'running'
+  | 'reported';
 
 interface UseTaskSessionConversationResult {
   messages: TaskConversationMessage[];
@@ -63,12 +76,21 @@ interface UseTaskSessionConversationResult {
   interactionPrompt: string | null;
   error: string | null;
   sessionReady: boolean;
+  experienceStage: ExperienceConversationStage;
+  experiencePlan: ExperiencePlan | null;
+  experienceQuestion: string | null;
+  experienceConversation: string[];
   sendMessage: (
     input: string,
-    attachments?: TaskImageAttachment[]
+    attachments?: TaskImageAttachment[],
+    options?: {
+      experienceMode?: boolean;
+      experiencePayload?: ExperienceExecutionPayload;
+    }
   ) => Promise<boolean>;
   resetConversation: () => Promise<void>;
   abortConversation: () => Promise<void>;
+  confirmExperiencePlan: () => Promise<boolean>;
 }
 
 function isTaskActive(status: TaskStatus): boolean {
@@ -248,6 +270,20 @@ function buildAssistantMessage(
         currentThinking = '';
         break;
       }
+      case 'experience_stage_summary': {
+        if (typeof payload.summary === 'string' && payload.summary.trim()) {
+          content = payload.summary;
+          success = true;
+        }
+        break;
+      }
+      case 'experience_report': {
+        if (typeof payload.content === 'string' && payload.content.trim()) {
+          content = payload.content;
+          success = true;
+        }
+        break;
+      }
     }
   });
 
@@ -316,6 +352,17 @@ export function useTaskSessionConversation({
   );
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [experienceStage, setExperienceStage] =
+    useState<ExperienceConversationStage>('idle');
+  const [experiencePlan, setExperiencePlan] = useState<ExperiencePlan | null>(
+    null
+  );
+  const [experienceQuestion, setExperienceQuestion] = useState<string | null>(
+    null
+  );
+  const [experienceConversation, setExperienceConversation] = useState<string[]>(
+    []
+  );
   const chatStreamRef = useRef<{ close: () => void } | null>(null);
   const currentTaskIdRef = useRef<string | null>(null);
   const taskRunsRef = useRef<Record<string, TaskRunResponse>>({});
@@ -369,7 +416,6 @@ export function useTaskSessionConversation({
       setWaitingForDevice(isTaskWaitingForDevice(nextTask));
       replaceTaskMessages(taskId);
 
-      // Check for interaction required actions
       if (event.event_type === 'step') {
         const action = event.payload.action as Record<string, unknown>;
         if (action && isInteractionRequired(action, agentType)) {
@@ -399,7 +445,6 @@ export function useTaskSessionConversation({
         return;
       }
 
-      // 如果正在等待用户交互，不清除状态
       if (waitingForUserInteraction) {
         return;
       }
@@ -414,9 +459,12 @@ export function useTaskSessionConversation({
         setWaitingForUserInteraction(false);
         setInteractionPrompt(null);
         currentTaskIdRef.current = null;
+        setExperienceStage(previous =>
+          previous === 'running' ? 'reported' : previous
+        );
       }
     },
-    [replaceTaskMessages, agentType, waitingForUserInteraction]
+    [agentType, replaceTaskMessages, waitingForUserInteraction]
   );
 
   const attachTaskStream = useCallback(
@@ -547,13 +595,17 @@ export function useTaskSessionConversation({
     };
   }, [deviceId, deviceSerial, restoreSessionConversation, sessionStorageKey]);
 
-  const sendMessage = useCallback(
-    async (input: string, attachments: TaskImageAttachment[] = []) => {
+  const submitTask = useCallback(
+    async (
+      input: string,
+      attachments: TaskImageAttachment[] = [],
+      experiencePayload?: ExperienceExecutionPayload
+    ) => {
       const inputValue = input.trim();
       const messageValue =
         inputValue || (waitingForUserInteraction ? '继续' : '');
       if (
-        (!messageValue && attachments.length === 0) ||
+        (!messageValue && attachments.length === 0 && !experiencePayload) ||
         loading ||
         !sessionId
       ) {
@@ -564,7 +616,6 @@ export function useTaskSessionConversation({
         setError(null);
         setLoading(true);
 
-        // Clear interaction state if we were waiting for user interaction
         if (waitingForUserInteraction) {
           setWaitingForUserInteraction(false);
           setInteractionPrompt(null);
@@ -573,7 +624,8 @@ export function useTaskSessionConversation({
         const task = await submitTaskSessionTask(
           sessionId,
           messageValue,
-          attachments
+          attachments,
+          experiencePayload
         );
         const initialEvents = (await listTaskEvents(task.id)).events;
         const reconciledTask = reconcileTaskRun(task, initialEvents);
@@ -584,6 +636,9 @@ export function useTaskSessionConversation({
           ? task.id
           : null;
         setWaitingForDevice(isTaskWaitingForDevice(reconciledTask));
+        if (experiencePayload) {
+          setExperienceStage('running');
+        }
         replaceTaskMessages(task.id);
 
         if (isTaskActive(reconciledTask.status)) {
@@ -616,6 +671,87 @@ export function useTaskSessionConversation({
     ]
   );
 
+  const sendMessage = useCallback(
+    async (
+      input: string,
+      attachments: TaskImageAttachment[] = [],
+      options?: {
+        experienceMode?: boolean;
+        experiencePayload?: ExperienceExecutionPayload;
+      }
+    ) => {
+      if (options?.experienceMode && !options.experiencePayload) {
+        const inputValue = input.trim();
+        if (!inputValue || loading) {
+          return false;
+        }
+
+        try {
+          setError(null);
+          setLoading(true);
+          setExperienceStage('drafting');
+          const conversation = [...experienceConversation, inputValue];
+          const draft = await createExperiencePlan(conversation);
+          setExperienceConversation(draft.conversation);
+          setExperiencePlan(draft.plan);
+          setExperienceQuestion(draft.question);
+          setExperienceStage(
+            draft.stage === 'asking' ? 'asking' : 'awaiting_confirmation'
+          );
+          setMessages(previousMessages => [
+            ...previousMessages,
+            {
+              id: `experience-user-${Date.now()}`,
+              role: 'user',
+              content: inputValue,
+              timestamp: new Date(),
+            },
+            {
+              id: `experience-plan-${Date.now()}`,
+              role: 'assistant',
+              content: '',
+              timestamp: new Date(),
+              eventType: 'experience_plan',
+              metadata: {
+                plan: draft.plan,
+                question: draft.question,
+                missing_fields: draft.missing_fields,
+              },
+            },
+          ]);
+          setLoading(false);
+          return true;
+        } catch (planError) {
+          console.error('Failed to create experience plan:', planError);
+          setLoading(false);
+          setExperienceStage('idle');
+          setError(
+            planError instanceof Error
+              ? planError.message
+              : 'Failed to create experience plan'
+          );
+          return false;
+        }
+      }
+
+      return submitTask(input, attachments, options?.experiencePayload);
+    },
+    [experienceConversation, loading, submitTask]
+  );
+
+  const confirmExperiencePlan = useCallback(async () => {
+    if (!experiencePlan) {
+      return false;
+    }
+    const goal =
+      experienceConversation.join('\n').trim() || experiencePlan.execution_goal;
+    return submitTask(goal, [], {
+      goal,
+      plan: experiencePlan,
+      auto_generate_report: true,
+    });
+  }, [experienceConversation, experiencePlan, submitTask]);
+
   const resetConversation = useCallback(async () => {
     if (chatStreamRef.current) {
       chatStreamRef.current.close();
@@ -634,6 +770,10 @@ export function useTaskSessionConversation({
       setWaitingForDevice(false);
       setError(null);
       setAborting(false);
+      setExperienceStage('idle');
+      setExperiencePlan(null);
+      setExperienceQuestion(null);
+      setExperienceConversation([]);
     } catch (resetError) {
       console.error('Failed to reset chat session:', resetError);
       setError(
@@ -687,8 +827,13 @@ export function useTaskSessionConversation({
     interactionPrompt,
     error,
     sessionReady: sessionId !== null,
+    experienceStage,
+    experiencePlan,
+    experienceQuestion,
+    experienceConversation,
     sendMessage,
     resetConversation,
     abortConversation,
+    confirmExperiencePlan,
   };
 }

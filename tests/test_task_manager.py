@@ -794,3 +794,215 @@ def test_report_waiting_for_background_summary_emits_status_message(
         store.close()
 
     asyncio.run(scenario())
+
+
+def test_classic_experience_task_generates_report_in_same_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import AutoGLM_GUI.experience_report as experience_report_module
+    import AutoGLM_GUI.phone_agent_manager as phone_agent_manager_module
+
+    async def fake_generate_experience_report(*, report_request, context):
+        assert report_request == "输出任务难度分析"
+        assert context.step_count == 1
+        return "experience report"
+
+    async def fake_generate_experience_segment_summary(
+        *,
+        source_task,
+        start_step,
+        end_step,
+        segment_text,
+    ):
+        _ = (source_task, start_step, end_step, segment_text)
+        return "stage summary"
+
+    monkeypatch.setattr(
+        experience_report_module,
+        "generate_experience_report",
+        fake_generate_experience_report,
+    )
+    monkeypatch.setattr(
+        experience_report_module,
+        "generate_experience_segment_summary",
+        fake_generate_experience_segment_summary,
+    )
+
+    class FakeAgent:
+        async def cancel(self) -> None:
+            return None
+
+        async def stream(self, prompt: str, **_: object):
+            assert "体验目标" in prompt
+            yield {
+                "type": "step",
+                "data": {
+                    "step": 1,
+                    "thinking": "查看任务",
+                    "action": {"action": "tap task"},
+                    "success": True,
+                    "finished": False,
+                    "screenshot": "c2NyZWVu",
+                },
+            }
+            yield {
+                "type": "done",
+                "data": {"message": "done", "steps": 1, "success": True},
+            }
+
+    class FakeManager:
+        def acquire_device_async(self, device_id: str, **_: object):
+            _ = device_id
+            return asyncio.sleep(0, result=True)
+
+        def get_agent_with_context(self, device_id: str, **_: object):
+            _ = device_id
+            return FakeAgent()
+
+        def register_abort_handler(self, *args: object, **kwargs: object) -> None:
+            _ = (args, kwargs)
+
+        def unregister_abort_handler(self, *args: object, **kwargs: object) -> None:
+            _ = (args, kwargs)
+
+        def set_error_state(self, *args: object, **kwargs: object) -> None:
+            _ = (args, kwargs)
+
+        def release_device(self, *args: object, **kwargs: object) -> None:
+            _ = (args, kwargs)
+
+    monkeypatch.setattr(
+        phone_agent_manager_module.PhoneAgentManager,
+        "get_instance",
+        staticmethod(lambda: FakeManager()),
+    )
+
+    async def scenario() -> None:
+        store = TaskStore(tmp_path / "tasks.db")
+        manager = TaskManager(store)
+        session = store.create_session(
+            kind="chat",
+            mode="classic",
+            device_id="device-a",
+            device_serial="serial-a",
+        )
+        task = store.create_task_run(
+            source="chat",
+            executor_key="classic_chat",
+            session_id=session["id"],
+            device_id="device-a",
+            device_serial="serial-a",
+            input_text="体验一下这个游戏",
+        )
+        store.append_event(
+            task_id=task["id"],
+            event_type="user_message",
+            role="user",
+            payload={
+                "message": "体验一下这个游戏",
+                "attachments": [],
+                "experience": {
+                    "goal": "体验一下这个游戏",
+                    "auto_generate_report": True,
+                    "plan": {
+                        "execution_goal": "体验一下这个游戏",
+                        "observation_targets": ["任务内容"],
+                        "analysis_lenses": ["任务难度曲线"],
+                        "evaluation_dimensions": ["系统设计"],
+                        "report_request": "输出任务难度分析",
+                        "stop_conditions": ["覆盖关键任务节点后停止"],
+                        "sampling_strategy": ["记录关键任务截图"],
+                    },
+                },
+            },
+        )
+
+        await manager._execute_classic_chat(task)
+
+        events = store.list_task_events(task["id"])
+        assert any(
+            event["event_type"] == "experience_report" for event in events
+        )
+        completed = store.get_task(task["id"])
+        assert completed is not None
+        assert completed["final_message"] == "experience report"
+        store.close()
+
+    asyncio.run(scenario())
+
+
+def test_classic_experience_task_handles_device_busy_before_payload_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from AutoGLM_GUI.exceptions import DeviceBusyError
+    import AutoGLM_GUI.phone_agent_manager as phone_agent_manager_module
+
+    class FakeManager:
+        async def acquire_device_async(self, device_id: str, **_: object) -> bool:
+            _ = device_id
+            raise DeviceBusyError("busy")
+
+        def unregister_abort_handler(self, *args: object, **kwargs: object) -> None:
+            _ = (args, kwargs)
+
+        def set_error_state(self, *args: object, **kwargs: object) -> None:
+            _ = (args, kwargs)
+
+        def release_device(self, *args: object, **kwargs: object) -> None:
+            _ = (args, kwargs)
+
+    monkeypatch.setattr(
+        phone_agent_manager_module.PhoneAgentManager,
+        "get_instance",
+        staticmethod(lambda: FakeManager()),
+    )
+
+    async def scenario() -> None:
+        store = TaskStore(tmp_path / "tasks.db")
+        manager = TaskManager(store)
+        session = store.create_session(
+            kind="chat",
+            mode="classic",
+            device_id="device-busy",
+            device_serial="serial-busy",
+        )
+        task = store.create_task_run(
+            source="chat",
+            executor_key="classic_chat",
+            session_id=session["id"],
+            device_id="device-busy",
+            device_serial="serial-busy",
+            input_text="experience goal",
+        )
+        store.append_event(
+            task_id=task["id"],
+            event_type="user_message",
+            role="user",
+            payload={
+                "message": "experience goal",
+                "attachments": [],
+                "experience": {
+                    "goal": "experience goal",
+                    "auto_generate_report": True,
+                    "plan": {
+                        "execution_goal": "experience goal",
+                        "observation_targets": ["tasks"],
+                        "analysis_lenses": ["difficulty"],
+                        "evaluation_dimensions": ["system design"],
+                        "report_request": "report",
+                        "stop_conditions": ["stop"],
+                        "sampling_strategy": ["capture"],
+                    },
+                },
+            },
+        )
+
+        await manager._execute_classic_chat(task)
+
+        completed = store.get_task(task["id"])
+        assert completed is not None
+        assert completed["status"] == TaskStatus.FAILED.value
+        assert completed["stop_reason"] == "device_busy"
+        store.close()
+
+    asyncio.run(scenario())

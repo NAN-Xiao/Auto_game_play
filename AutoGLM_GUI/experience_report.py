@@ -606,6 +606,7 @@ def build_experience_report_context(
     """Build compact report context from the persisted previous task."""
 
     events = store.list_task_events(str(source_task["id"]))
+    counted_step_events = sum(1 for event in events if event["event_type"] == "step")
     segment_summaries = sorted(
         _existing_segment_summaries(events).values(),
         key=lambda payload: (
@@ -626,7 +627,7 @@ def build_experience_report_context(
         "",
     ]
 
-    step_events = int(source_task.get("step_count") or 0)
+    step_events = counted_step_events or int(source_task.get("step_count") or 0)
     if segment_summaries:
         lines.extend(
             [

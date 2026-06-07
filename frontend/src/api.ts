@@ -946,6 +946,7 @@ export interface TaskRunResponse {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  duration_ms?: number | null;
 }
 
 export interface TaskRunListResponse {
@@ -972,6 +973,30 @@ export interface TaskImageAttachment {
   mime_type: string;
   data: string;
   name?: string | null;
+}
+
+export interface ExperiencePlan {
+  execution_goal: string;
+  observation_targets: string[];
+  analysis_lenses: string[];
+  evaluation_dimensions: string[];
+  report_request: string;
+  stop_conditions: string[];
+  sampling_strategy: string[];
+}
+
+export interface ExperiencePlanResponse {
+  stage: 'asking' | 'awaiting_confirmation';
+  plan: ExperiencePlan;
+  question: string | null;
+  missing_fields: string[];
+  conversation: string[];
+}
+
+export interface ExperienceExecutionPayload {
+  goal: string;
+  plan: ExperiencePlan;
+  auto_generate_report?: boolean;
 }
 
 export interface TaskCancelResponse {
@@ -1032,12 +1057,22 @@ export async function listTaskSessionTasks(
 export async function submitTaskSessionTask(
   sessionId: string,
   message: string,
-  attachments: TaskImageAttachment[] = []
+  attachments: TaskImageAttachment[] = [],
+  experience?: ExperienceExecutionPayload
 ): Promise<TaskRunResponse> {
   const res = await axios.post<TaskRunResponse>(
     `/api/task-sessions/${sessionId}/tasks`,
-    { message, attachments }
+    { message, attachments, experience }
   );
+  return res.data;
+}
+
+export async function createExperiencePlan(
+  messages: string[]
+): Promise<ExperiencePlanResponse> {
+  const res = await axios.post<ExperiencePlanResponse>('/api/experience/plan', {
+    messages,
+  });
   return res.data;
 }
 

@@ -35,6 +35,9 @@ from AutoGLM_GUI.task_store import (
 router = APIRouter()
 
 _INTERNAL_TASK_EVENT_TYPES = {"experience_segment_summary"}
+_PUBLIC_EVENT_TYPE_ALIASES = {
+    "experience_segment_summary": "experience_stage_summary",
+}
 
 
 def _task_run_response(record: TaskRecord) -> TaskRunResponse:
@@ -109,10 +112,11 @@ def _task_session_response(record: TaskSessionRecord) -> TaskSessionResponse:
 
 
 def _task_event_response(record: TaskEventRecord) -> TaskEventResponse:
+    event_type = str(record["event_type"])
     return TaskEventResponse(
         task_id=str(record["task_id"]),
         seq=int(record["seq"]),
-        event_type=str(record["event_type"]),
+        event_type=_PUBLIC_EVENT_TYPE_ALIASES.get(event_type, event_type),
         role=str(record["role"]),
         payload=dict(record["payload"]),
         created_at=str(record["created_at"]),
@@ -120,7 +124,10 @@ def _task_event_response(record: TaskEventRecord) -> TaskEventResponse:
 
 
 def _is_public_task_event(record: TaskEventRecord) -> bool:
-    return str(record["event_type"]) not in _INTERNAL_TASK_EVENT_TYPES
+    event_type = str(record["event_type"])
+    return event_type not in _INTERNAL_TASK_EVENT_TYPES or (
+        event_type in _PUBLIC_EVENT_TYPE_ALIASES
+    )
 
 
 @router.post("/api/task-sessions", response_model=TaskSessionResponse)
@@ -217,6 +224,9 @@ async def submit_task_session_task(
         device_serial=str(session["device_serial"]),
         message=request.message,
         attachments=[attachment.model_dump() for attachment in request.attachments],
+        experience=(
+            request.experience.model_dump() if request.experience is not None else None
+        ),
     )
     return _task_run_response(task)
 
