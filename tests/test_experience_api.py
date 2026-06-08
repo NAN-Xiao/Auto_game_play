@@ -93,6 +93,25 @@ def test_experience_plan_updates_content_fields_from_followup_focus() -> None:
     assert plan["memory_policy"] == "independent_items"
 
 
+def test_experience_plan_updates_memory_policy_from_followup() -> None:
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/experience/plan",
+        json={
+            "messages": [
+                "依次浏览每个商品详情，停留一段时间观察卖点和价格，提炼内容要点后切换下一个",
+                "记忆方式改成连续状态，要保留目标、进度和上一步结果",
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["plan"]["memory_policy"] == "stateful_flow"
+
+
 def test_experience_plan_uses_stateful_memory_for_plain_game_flow() -> None:
     app = FastAPI()
     app.include_router(router)
@@ -101,6 +120,24 @@ def test_experience_plan_uses_stateful_memory_for_plain_game_flow() -> None:
     response = client.post(
         "/api/experience/plan",
         json={"messages": ["体验这个游戏的新手任务流程，记录任务反馈和卡点"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["plan"]["memory_policy"] == "stateful_flow"
+
+
+def test_experience_plan_uses_stateful_memory_for_game_issue_review() -> None:
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/experience/plan",
+        json={
+            "messages": [
+                "自动体验这个游戏。关注系统、画面，如果有任何卡点异常你要记录下来"
+            ]
+        },
     )
 
     assert response.status_code == 200

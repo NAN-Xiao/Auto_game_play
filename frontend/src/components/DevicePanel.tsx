@@ -125,11 +125,11 @@ function getExperienceQuestionFromMessage(
 function memoryPolicyLabel(policy: ExperiencePlan['memory_policy']): string {
   switch (policy) {
     case 'independent_items':
-      return '独立对象：每轮只看当前对象，历史用于最终报告';
+      return '独立对象：适合视频/商品/帖子，每个对象单独观察和总结';
     case 'stateful_flow':
-      return '连续状态：保留目标、进度和上一步结果';
+      return '连续状态：适合游戏/App流程，持续保留目标、进度、卡点和上一步结果';
     default:
-      return '混合：当前对象独立分析，同时保留必要进度';
+      return '混合：当前阶段重点观察，同时保留必要进度和切换结果';
   }
 }
 
@@ -278,7 +278,7 @@ function ExperiencePlanMessageCard({
         )}
         {canConfirm && (
           <div className="pt-1 text-center text-sm text-slate-500 dark:text-slate-400">
-            可以继续修改或者
+            可以继续修改，比如“记忆方式改成连续状态”，或者
             <a
               href="#"
               onClick={event => {

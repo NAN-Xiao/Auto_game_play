@@ -639,6 +639,12 @@ def test_memory_policy_inference_for_plain_chat_tasks() -> None:
         == "independent_items"
     )
     assert _infer_memory_policy("体验这个游戏的新手任务流程") == "stateful_flow"
+    assert (
+        _infer_memory_policy(
+            "自动体验这个游戏。关注系统、画面，如果有任何卡点异常你要记录下来"
+        )
+        == "stateful_flow"
+    )
 
 
 def test_experience_requires_observation_window_from_semantics() -> None:

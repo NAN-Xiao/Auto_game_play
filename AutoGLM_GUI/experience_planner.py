@@ -112,6 +112,9 @@ _ITEM_SWITCH_KEYWORDS = (
 )
 
 _STATEFUL_FLOW_KEYWORDS = (
+    "app",
+    "应用",
+    "软件",
     "游戏",
     "游玩",
     "玩法",
@@ -147,6 +150,36 @@ _INDEPENDENT_ITEM_KEYWORDS = (
     "文章",
     "列表",
     "信息流",
+)
+
+_STATEFUL_MEMORY_OVERRIDE_KEYWORDS = (
+    "连续状态",
+    "状态流",
+    "流程记忆",
+    "保留进度",
+    "保留目标",
+    "保留历史",
+    "记住上一步",
+    "记住进度",
+    "参考历史",
+    "参考之前",
+    "不是独立对象",
+)
+
+_INDEPENDENT_MEMORY_OVERRIDE_KEYWORDS = (
+    "独立对象",
+    "每轮独立",
+    "每个对象独立",
+    "只看当前对象",
+    "不要参考上一个",
+    "不依赖历史",
+    "历史只用于报告",
+)
+
+_HYBRID_MEMORY_OVERRIDE_KEYWORDS = (
+    "混合记忆",
+    "混合模式",
+    "保留必要进度",
 )
 
 
@@ -292,9 +325,13 @@ def _build_sampling_strategy(
 
 
 def _infer_memory_policy(text: str) -> MemoryPolicy:
+    if _contains_any(text, _STATEFUL_MEMORY_OVERRIDE_KEYWORDS):
+        return "stateful_flow"
+    if _contains_any(text, _INDEPENDENT_MEMORY_OVERRIDE_KEYWORDS):
+        return "independent_items"
+    if _contains_any(text, _HYBRID_MEMORY_OVERRIDE_KEYWORDS):
+        return "hybrid"
     if _contains_any(text, _STATEFUL_FLOW_KEYWORDS):
-        if _requires_iterative_item_sampling(text):
-            return "hybrid"
         return "stateful_flow"
     if _requires_iterative_item_sampling(text) and _contains_any(
         text, _INDEPENDENT_ITEM_KEYWORDS

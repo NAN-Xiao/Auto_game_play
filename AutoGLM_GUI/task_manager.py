@@ -109,6 +109,9 @@ DYNAMIC_OBSERVATION_SUBJECT_HINTS = (
     "页面变化",
 )
 STATEFUL_FLOW_HINTS = (
+    "app",
+    "应用",
+    "软件",
     "游戏",
     "游玩",
     "玩法",
@@ -177,11 +180,7 @@ def _looks_like_observation_window_task(text: str) -> bool:
 
 def _infer_memory_policy(text: str) -> MemoryPolicy:
     if _contains_any(text, STATEFUL_FLOW_HINTS):
-        return (
-            "hybrid"
-            if _looks_like_iterative_observation_task(text)
-            else "stateful_flow"
-        )
+        return "stateful_flow"
     if _looks_like_iterative_observation_task(text) and _contains_any(
         text, INDEPENDENT_ITEM_HINTS
     ):
