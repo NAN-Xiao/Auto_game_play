@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: autoglm_gui
+title: AutoGLM 手机智能体 Web 交互平台
+scope:
+    - AutoGLM_GUI/
+source_files: []
+depends_on: []
+related_to:
+    - path: electron
+    - path: tests

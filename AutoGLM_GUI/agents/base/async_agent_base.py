@@ -19,7 +19,7 @@ from openai import AsyncOpenAI
 
 from AutoGLM_GUI.actions import ActionHandler
 from AutoGLM_GUI.config import AgentConfig, ModelConfig
-from AutoGLM_GUI.device_protocol import DeviceProtocol
+from AutoGLM_GUI.device_protocol import DeviceProtocol, Screenshot
 from AutoGLM_GUI.logger import logger
 from AutoGLM_GUI.model import MessageBuilder
 from AutoGLM_GUI.trace import summarize_text, trace_span
@@ -27,6 +27,58 @@ from AutoGLM_GUI.trace import summarize_text, trace_span
 
 WATCHDOG_REPEATED_ACTION_LIMIT = 12
 WATCHDOG_NO_PROGRESS_LIMIT = 20
+STRICT_FINISH_RETRY_LIMIT = 1
+STRICT_EMPTY_FINISH_LIMIT = 2
+STRICT_FINISH_SUPPRESSION_LIMIT = 3
+OBSERVATION_WINDOW_MAX_SCREENSHOTS = 20
+OBSERVATION_WINDOW_MAX_INTERVAL_SECONDS = 60.0
+MODEL_STREAM_CHUNK_TIMEOUT_SECONDS = 120.0
+MODEL_STREAM_CREATE_TIMEOUT_SECONDS = 60.0
+HYBRID_HISTORY_MESSAGE_LIMIT = 6
+STATEFUL_HISTORY_MESSAGE_LIMIT = 12
+
+
+def _collect_model_message_stats(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    image_count = 0
+    image_base64_chars = 0
+    max_image_base64_chars = 0
+    text_chars = 0
+
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            text_chars += len(content)
+            continue
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text":
+                text = part.get("text")
+                if isinstance(text, str):
+                    text_chars += len(text)
+                continue
+            if part.get("type") != "image_url":
+                continue
+            image_url = part.get("image_url")
+            if not isinstance(image_url, dict):
+                continue
+            url = image_url.get("url")
+            if not isinstance(url, str):
+                continue
+            base64_chars = len(url.rsplit(",", 1)[-1])
+            image_count += 1
+            image_base64_chars += base64_chars
+            max_image_base64_chars = max(max_image_base64_chars, base64_chars)
+
+    return {
+        "image_count": image_count,
+        "image_base64_chars": image_base64_chars,
+        "max_image_base64_chars": max_image_base64_chars,
+        "text_chars": text_chars,
+        "estimated_payload_chars": image_base64_chars + text_chars,
+    }
 
 
 class AsyncAgentBase(ABC):
@@ -79,6 +131,9 @@ class AsyncAgentBase(ABC):
         self._user_image_attachments: list[dict[str, str]] = []
         self._step_count = 0
         self._is_running = False
+        self._strict_finish_recovery_pending = False
+        self._strict_finish_recovery_attempts = 0
+        self._active_task: str | None = None
 
     # ==================== 子类必须实现 ====================
 
@@ -109,6 +164,334 @@ class AsyncAgentBase(ABC):
 
     # ==================== 共享逻辑 ====================
 
+    def _observation_window_count(self) -> int:
+        count = max(
+            1,
+            min(
+                int(self.agent_config.observation_window_screenshot_count),
+                OBSERVATION_WINDOW_MAX_SCREENSHOTS,
+            ),
+        )
+        if self.agent_config.observation_window_enabled or count > 1:
+            return count
+        return 1
+
+    def _observation_window_interval_seconds(self) -> float:
+        if self._observation_window_count() <= 1:
+            return 0.0
+        return max(
+            0.0,
+            min(
+                float(self.agent_config.observation_window_interval_seconds),
+                OBSERVATION_WINDOW_MAX_INTERVAL_SECONDS,
+            ),
+        )
+
+    async def _wait_observation_window_interval(
+        self, *, sample_index: int, sample_count: int
+    ) -> None:
+        interval_seconds = self._observation_window_interval_seconds()
+        if interval_seconds <= 0:
+            return
+        attrs = {
+            "step": self._step_count,
+            "agent_type": self.__class__.__name__,
+            "sample_index": sample_index,
+            "sample_count": sample_count,
+            "duration_ms": round(interval_seconds * 1000, 3),
+        }
+        with trace_span("sleep.observation_window", attrs=attrs):
+            try:
+                await asyncio.wait_for(
+                    self._cancel_event.wait(), timeout=interval_seconds
+                )
+            except asyncio.TimeoutError:
+                return
+            raise asyncio.CancelledError()
+
+    def _build_observation_event(
+        self,
+        *,
+        phase: str,
+        sample_index: int,
+        sample_count: int,
+        screenshot: Screenshot | None = None,
+    ) -> dict[str, Any]:
+        interval_seconds = self._observation_window_interval_seconds()
+        payload: dict[str, Any] = {
+            "phase": phase,
+            "step": self._step_count,
+            "sample_index": sample_index,
+            "sample_count": sample_count,
+            "interval_seconds": interval_seconds,
+            "observation_window": sample_count > 1,
+        }
+        if screenshot is not None:
+            payload.update(
+                {
+                    "screenshot": screenshot.base64_data,
+                    "width": screenshot.width,
+                    "height": screenshot.height,
+                }
+            )
+        if phase == "start":
+            payload["message"] = (
+                f"开始直接截帧：共 {sample_count} 张，间隔 {interval_seconds:g} 秒。"
+            )
+        elif phase == "sample":
+            payload["message"] = f"已截取第 {sample_index}/{sample_count} 张截图。"
+        elif phase == "complete":
+            payload["message"] = (
+                f"截帧完成：已采集 {sample_count} 张截图，开始一次性多模态综合分析。"
+            )
+        return {"type": "observation", "data": payload}
+
+    async def _capture_observation_window(self) -> list[Screenshot]:
+        """Capture the current screen, optionally as a temporal observation window."""
+        sample_count = self._observation_window_count()
+        screenshots: list[Screenshot] = []
+        for index in range(sample_count):
+            if sample_count > 1 and index > 0:
+                await self._wait_observation_window_interval(
+                    sample_index=index + 1,
+                    sample_count=sample_count,
+                )
+            with trace_span(
+                "step.capture_screenshot",
+                attrs={
+                    "step": self._step_count,
+                    "agent_type": self.__class__.__name__,
+                    "sample_index": index + 1,
+                    "sample_count": sample_count,
+                    "observation_window": sample_count > 1,
+                },
+            ):
+                screenshots.append(await asyncio.to_thread(self.device.get_screenshot))
+        return screenshots
+
+    async def _observe_observation_window(
+        self,
+    ) -> AsyncGenerator[dict[str, Any] | list[Screenshot], None]:
+        """Capture an observation window and stream user-visible progress events."""
+        sample_count = self._observation_window_count()
+        screenshots: list[Screenshot] = []
+        if sample_count > 1:
+            yield self._build_observation_event(
+                phase="start",
+                sample_index=0,
+                sample_count=sample_count,
+            )
+        for index in range(sample_count):
+            if sample_count > 1 and index > 0:
+                await self._wait_observation_window_interval(
+                    sample_index=index + 1,
+                    sample_count=sample_count,
+                )
+            with trace_span(
+                "step.capture_screenshot",
+                attrs={
+                    "step": self._step_count,
+                    "agent_type": self.__class__.__name__,
+                    "sample_index": index + 1,
+                    "sample_count": sample_count,
+                    "observation_window": sample_count > 1,
+                },
+            ):
+                screenshot = await asyncio.to_thread(self.device.get_screenshot)
+                screenshots.append(screenshot)
+            if sample_count > 1:
+                yield self._build_observation_event(
+                    phase="sample",
+                    sample_index=index + 1,
+                    sample_count=sample_count,
+                    screenshot=screenshot,
+                )
+        if sample_count > 1:
+            yield self._build_observation_event(
+                phase="complete",
+                sample_index=sample_count,
+                sample_count=sample_count,
+            )
+        yield screenshots
+
+    def _build_observation_window_notice(
+        self, *, screenshot_count: int, reference_image_count: int = 0
+    ) -> str:
+        if screenshot_count <= 1 and reference_image_count <= 0:
+            return ""
+        parts: list[str] = []
+        if screenshot_count > 1:
+            parts.append(
+                "Observation window: the first "
+                f"{screenshot_count} images are chronological screenshots of the "
+                "same current screen/object. Analyze these frames together for "
+                f"motion, content changes, timing, and evidence. Image {screenshot_count} "
+                "is the latest actionable screen for tap/swipe coordinates; earlier "
+                "frames are temporal evidence only."
+            )
+        if reference_image_count > 0:
+            first_reference = screenshot_count + 1
+            last_reference = screenshot_count + reference_image_count
+            image_word = "image" if reference_image_count == 1 else "images"
+            parts.append(
+                f"User attached {reference_image_count} reference {image_word}. "
+                f"Images {first_reference}-{last_reference} are user-provided "
+                "references for the task, not current actionable screens."
+            )
+        return "\n\n".join(parts)
+
+    def _is_strict_run_mode(self) -> bool:
+        return self.agent_config.run_limit_type != "autonomous"
+
+    def _uses_stateless_observation_turns(self) -> bool:
+        if self._observation_window_count() <= 1:
+            return False
+        return self.agent_config.memory_policy == "independent_items"
+
+    def _history_message_limit_for_policy(self) -> int | None:
+        if self.agent_config.memory_policy == "hybrid":
+            return HYBRID_HISTORY_MESSAGE_LIMIT
+        if self.agent_config.memory_policy == "stateful_flow":
+            return STATEFUL_HISTORY_MESSAGE_LIMIT
+        return None
+
+    def _trim_context_history(self) -> None:
+        limit = self._history_message_limit_for_policy()
+        if limit is None or len(self._context) <= limit + 1:
+            return
+        self._context = [self._context[0], *self._context[-limit:]]
+
+    def _prepare_context_for_model_turn(self) -> bool:
+        if self._uses_stateless_observation_turns():
+            self._context = [copy.deepcopy(self._initial_system_message)]
+            return True
+
+        self._context = [
+            MessageBuilder.remove_images_from_message(message)
+            for message in self._context
+        ]
+        self._trim_context_history()
+        return False
+
+    def _build_stateless_observation_turn_notice(self, *, include_task: bool) -> str:
+        parts: list[str] = []
+        if include_task and self._active_task:
+            parts.append(f"** Original Task **\n\n{self._active_task}")
+        parts.append(
+            "** Per-turn Memory Policy **\n\n"
+            "当前是逐项循环任务的单轮分析。历史截图、thinking、小结和动作已经由任务事件持久化，"
+            "最后报告会从这些事件/数据库记录汇总；本轮不要依赖或复述历史对象内容，只根据用户原始目标、"
+            "当前观察窗口和当前界面判断当前对象，输出本轮给用户看的结论并选择下一步。"
+        )
+        return "\n\n".join(parts)
+
+    async def _iter_model_stream_chunks(self, stream: Any) -> AsyncGenerator[Any, None]:
+        iterator = stream.__aiter__()
+        while True:
+            try:
+                yield await asyncio.wait_for(
+                    iterator.__anext__(),
+                    timeout=MODEL_STREAM_CHUNK_TIMEOUT_SECONDS,
+                )
+            except StopAsyncIteration:
+                return
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    "Model stream produced no output for "
+                    f"{MODEL_STREAM_CHUNK_TIMEOUT_SECONDS:g} seconds"
+                ) from exc
+
+    async def _create_model_stream(self, messages: list[dict[str, Any]]) -> Any:
+        stats = _collect_model_message_stats(messages)
+        with trace_span(
+            "model.stream.create",
+            attrs={
+                "agent_type": self.__class__.__name__,
+                "model_name": self.model_config.model_name,
+                "message_count": len(messages),
+                "timeout_seconds": MODEL_STREAM_CREATE_TIMEOUT_SECONDS,
+                **stats,
+            },
+        ):
+            try:
+                return await asyncio.wait_for(
+                    self.openai_client.chat.completions.create(
+                        messages=messages,  # type: ignore[arg-type]
+                        model=self.model_config.model_name,
+                        max_tokens=self.model_config.max_tokens,
+                        temperature=self.model_config.temperature,
+                        top_p=self.model_config.top_p,
+                        frequency_penalty=self.model_config.frequency_penalty,
+                        extra_body=self.model_config.extra_body,
+                        stream=True,
+                    ),
+                    timeout=MODEL_STREAM_CREATE_TIMEOUT_SECONDS,
+                )
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    "Model stream was not created within "
+                    f"{MODEL_STREAM_CREATE_TIMEOUT_SECONDS:g} seconds"
+                ) from exc
+
+    def _is_empty_finish_step(self, step_data: dict[str, Any]) -> bool:
+        action = step_data.get("action") or {}
+        action_message = action.get("message")
+        step_message = step_data.get("message")
+        return (
+            action.get("_metadata") == "finish"
+            and not str(action_message or "").strip()
+            and not str(step_message or "").strip()
+        )
+
+    def _build_strict_finish_recovery_instruction(
+        self, step_data: dict[str, Any]
+    ) -> str:
+        action = step_data.get("action") or {}
+        finish_message = str(
+            action.get("message") or step_data.get("message") or ""
+        ).strip()
+        previous_summary = (
+            f"\n模型刚才给出的 finish message：{finish_message}"
+            if finish_message
+            else "\n模型刚才给出的是空 finish，没有可展示小结。"
+        )
+        if self._is_empty_finish_step(step_data):
+            violation = (
+                "上一次模型返回了空 finish，这是无效步骤：没有给用户可见总结，"
+                "也没有执行切换动作。"
+            )
+        else:
+            violation = (
+                "上一次模型调用了 finish，但当前是严格运行模式，finish 不是有效动作。"
+            )
+        return (
+            f"{violation}{previous_summary}\n"
+            "必须立即基于刚才同一轮观察窗口内的多张截图补做当前对象结论，"
+            "然后执行一个切换到下一个对象的 do(...) 动作。\n"
+            "硬性要求：\n"
+            "1. 不要再次调用 finish。\n"
+            "2. 不要只把总结写在 thinking 中。\n"
+            '3. 切换动作必须携带 message="OBJECT_SUMMARY: ..."，'
+            "message 内容要直接给用户展示，并按用户原始目标和当前对象类型自动选择总结结构。"
+            "视频任务偏内容/文案/画面/观点；App 体验偏流程/交互/状态变化/问题；"
+            "游戏任务偏目标/操作反馈/关卡机制/体验卡点；商品/帖子/页面偏主体内容、"
+            "关键信息和判断依据。UI、控件、状态、布局、文案、账号/来源、时间、"
+            "价格、互动数据等是否是核心，必须由用户目标决定；App、游戏、通讯、"
+            "流程、体验任务中，UI 与交互状态通常就是核心证据。只有当这些信息和"
+            "用户目标无关时，才把它们降为背景或忽略。\n"
+            "4. 如果当前界面是短视频/信息流，优先使用 Swipe 切换到下一个对象；"
+            "如果当前界面不是信息流，再选择合适的 Tap/Back/Wait 等动作。"
+        )
+
+    def _consume_strict_finish_recovery_instruction(self) -> str | None:
+        if not self._strict_finish_recovery_pending:
+            return None
+        self._strict_finish_recovery_pending = False
+        return (
+            "严格运行模式恢复步骤：复用刚才采集的观察窗口截图，"
+            "不要重新采样。你必须基于这些截图输出 OBJECT_SUMMARY 并执行切换动作。"
+        )
+
     async def stream(
         self, task: str, *, continue_with: str | None = None
     ) -> AsyncIterator[dict[str, Any]]:
@@ -124,6 +507,7 @@ class AsyncAgentBase(ABC):
         self._is_running = True
         if continue_with is None:
             self._step_count = 0
+            self._active_task = task
         else:
             logger.info(
                 "Continuing agent stream from step %d with user input: %s",
@@ -196,6 +580,8 @@ class AsyncAgentBase(ABC):
                 started_at = time.monotonic()
                 repeated_action_count = 0
                 no_progress_count = 0
+                strict_empty_finish_count = 0
+                strict_finish_suppressed_count = 0
                 last_action_signature: str | None = None
 
                 while self._is_running:
@@ -226,7 +612,42 @@ class AsyncAgentBase(ABC):
                         },
                     ) as step_span:
                         async for event in self._execute_step():
+                            if (
+                                event["type"] == "step"
+                                and event["data"].get("finished")
+                                and event["data"].get("success", True)
+                                and self._is_strict_run_mode()
+                            ):
+                                strict_finish_suppressed_count += 1
+                                strict_empty_finish_count = (
+                                    strict_empty_finish_count + 1
+                                    if self._is_empty_finish_step(event["data"])
+                                    else 0
+                                )
+                                event = {
+                                    **event,
+                                    "data": {
+                                        **event["data"],
+                                        "finished": False,
+                                        "finish_suppressed": True,
+                                        "strict_recovery_pending": True,
+                                        "empty_finish_count": strict_empty_finish_count,
+                                        "suppressed_finish_count": strict_finish_suppressed_count,
+                                    },
+                                }
+                                self._context.append(
+                                    MessageBuilder.create_user_message(
+                                        self._build_strict_finish_recovery_instruction(
+                                            event["data"]
+                                        )
+                                    )
+                                )
+                                self._strict_finish_recovery_pending = True
+                                self._strict_finish_recovery_attempts = 0
                             if event["type"] == "step":
+                                if not event["data"].get("finish_suppressed"):
+                                    strict_empty_finish_count = 0
+                                    strict_finish_suppressed_count = 0
                                 step_span.set_attributes(
                                     {
                                         "success": event["data"].get("success"),
@@ -254,6 +675,49 @@ class AsyncAgentBase(ABC):
 
                             yield event
 
+                            if (
+                                event["type"] == "step"
+                                and event["data"].get("finish_suppressed")
+                                and (
+                                    strict_empty_finish_count
+                                    >= STRICT_EMPTY_FINISH_LIMIT
+                                    or strict_finish_suppressed_count
+                                    >= STRICT_FINISH_SUPPRESSION_LIMIT
+                                )
+                            ):
+                                if (
+                                    strict_empty_finish_count
+                                    >= STRICT_EMPTY_FINISH_LIMIT
+                                ):
+                                    stop_reason = "strict_empty_finish_loop"
+                                    message = (
+                                        "严格运行模式已停止：模型连续返回空 finish，"
+                                        "没有按要求输出 OBJECT_SUMMARY 或切换下一个对象。"
+                                    )
+                                else:
+                                    stop_reason = "strict_finish_loop"
+                                    message = (
+                                        "严格运行模式已停止：模型连续调用 finish，"
+                                        "没有按要求执行携带 OBJECT_SUMMARY 的切换动作。"
+                                    )
+                                stream_span.set_attributes(
+                                    {
+                                        "success": False,
+                                        "steps": self._step_count,
+                                        "error_kind": stop_reason,
+                                    }
+                                )
+                                yield {
+                                    "type": "done",
+                                    "data": {
+                                        "message": message,
+                                        "steps": self._step_count,
+                                        "success": False,
+                                        "stop_reason": stop_reason,
+                                    },
+                                }
+                                return
+
                             if event["type"] == "step":
                                 step_data = event["data"]
                                 action = step_data.get("action") or {}
@@ -272,8 +736,34 @@ class AsyncAgentBase(ABC):
                                     }
                                     return
 
-                            if event["type"] == "step" and event["data"].get(
-                                "finished"
+                            if (
+                                event["type"] == "step"
+                                and event["data"].get("finished")
+                                and not event["data"].get("success", True)
+                            ):
+                                stream_span.set_attributes(
+                                    {
+                                        "success": False,
+                                        "steps": self._step_count,
+                                        "error_kind": "step_failed",
+                                    }
+                                )
+                                yield {
+                                    "type": "done",
+                                    "data": {
+                                        "message": event["data"].get("message")
+                                        or "Task failed",
+                                        "steps": self._step_count,
+                                        "success": False,
+                                        "stop_reason": "step_failed",
+                                    },
+                                }
+                                return
+
+                            if (
+                                event["type"] == "step"
+                                and event["data"].get("finished")
+                                and self.agent_config.run_limit_type == "autonomous"
                             ):
                                 success = event["data"].get("success", True)
                                 stream_span.set_attributes(
@@ -285,8 +775,11 @@ class AsyncAgentBase(ABC):
                                 yield {
                                     "type": "done",
                                     "data": {
-                                        "message": event["data"].get(
-                                            "message", "Task completed"
+                                        "message": event["data"].get("message")
+                                        or (
+                                            "Task completed"
+                                            if success
+                                            else "Task failed"
                                         ),
                                         "steps": self._step_count,
                                         "success": success,
@@ -414,6 +907,9 @@ class AsyncAgentBase(ABC):
         self._context = [copy.deepcopy(self._initial_system_message)]
         self._user_image_attachments = []
         self._step_count = 0
+        self._active_task = None
+        self._strict_finish_recovery_pending = False
+        self._strict_finish_recovery_attempts = 0
         self._is_running = False
         self._cancel_event.clear()
 

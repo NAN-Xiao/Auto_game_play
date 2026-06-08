@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from AutoGLM_GUI.config import RunLimitType
+from AutoGLM_GUI.config import MemoryPolicy, RunLimitType
 from AutoGLM_GUI.device_metadata_manager import DISPLAY_NAME_MAX_LENGTH
 from AutoGLM_GUI.task_store import TaskSessionStatus, TaskStatus
 
@@ -284,9 +284,11 @@ class ConfigResponse(BaseModel):
     agent_config_params: dict[str, Any] | None = None  # Agent-specific configuration
 
     # Agent 执行配置
-    run_limit_type: RunLimitType = "steps"
+    run_limit_type: RunLimitType = "autonomous"
     default_max_steps: int | None = 100  # None 表示不限制
     default_max_duration_seconds: int | None = None  # None 表示不限制
+    observation_window_screenshot_count: int = 5
+    observation_window_interval_seconds: float = 3.0
 
     # 分层代理配置
     layered_max_turns: int | None = 50  # None 表示不限制
@@ -313,9 +315,11 @@ class ConfigSaveRequest(BaseModel):
     )
 
     # Agent 执行配置
-    run_limit_type: RunLimitType = "steps"
+    run_limit_type: RunLimitType = "autonomous"
     default_max_steps: int | None = None  # 单次任务最大执行步数
     default_max_duration_seconds: int | None = None  # 单次任务最大持续时长（秒）
+    observation_window_screenshot_count: int = 5
+    observation_window_interval_seconds: float = 3.0
 
     # 分层代理配置
     layered_max_turns: int | None = None  # 分层代理模式的最大轮次
@@ -342,6 +346,24 @@ class ConfigSaveRequest(BaseModel):
             return v
         if v <= 0:
             raise ValueError("default_max_duration_seconds must be positive")
+        return v
+
+    @field_validator("observation_window_screenshot_count")
+    @classmethod
+    def validate_observation_window_screenshot_count(cls, v: int) -> int:
+        if not 1 <= v <= 20:
+            raise ValueError(
+                "observation_window_screenshot_count must be between 1 and 20"
+            )
+        return v
+
+    @field_validator("observation_window_interval_seconds")
+    @classmethod
+    def validate_observation_window_interval_seconds(cls, v: float) -> float:
+        if not 0 <= v <= 60:
+            raise ValueError(
+                "observation_window_interval_seconds must be between 0 and 60"
+            )
         return v
 
     @field_validator("layered_max_turns")
@@ -888,6 +910,7 @@ class ExperiencePlan(BaseModel):
     report_request: str
     stop_conditions: list[str] = Field(default_factory=list)
     sampling_strategy: list[str] = Field(default_factory=list)
+    memory_policy: MemoryPolicy = "hybrid"
 
     @field_validator(
         "execution_goal",
@@ -961,7 +984,9 @@ class TaskSubmitRequest(BaseModel):
     @model_validator(mode="after")
     def validate_message_or_attachment(self) -> "TaskSubmitRequest":
         if not self.message and not self.attachments and self.experience is None:
-            raise ValueError("message, image attachment, or experience payload is required")
+            raise ValueError(
+                "message, image attachment, or experience payload is required"
+            )
         total_bytes = sum(attachment.byte_size() for attachment in self.attachments)
         if total_bytes > TASK_IMAGE_ATTACHMENT_MAX_TOTAL_BYTES:
             raise ValueError("images too large in total (max 12 MiB)")

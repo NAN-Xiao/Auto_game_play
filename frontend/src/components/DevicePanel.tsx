@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { DeviceMonitor } from './DeviceMonitor';
 import type {
+  ExperiencePlan,
   ModelErrorDetails,
   StepTimingSummary,
   TaskImageAttachment,
@@ -49,6 +50,7 @@ import {
 import { ImagePreview } from '@/components/ui/image-preview';
 import {
   useTaskSessionConversation,
+  type ObservationWindowProgress,
   type TaskConversationMessage,
 } from '../hooks/useTaskSessionConversation';
 import { MarkdownContent } from './MarkdownContent';
@@ -80,6 +82,219 @@ const IMAGE_ATTACHMENT_TYPES = new Set([
 ]);
 const MAX_IMAGE_ATTACHMENTS = 3;
 const MAX_IMAGE_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const EXPERIENCE_CONFIRMATION_COMMANDS = new Set([
+  '开始',
+  '开始执行',
+  '确认',
+  '确认开始',
+  '确认执行',
+  '确认并开始',
+  '确认无误直接开始',
+  '执行',
+  'start',
+  'go',
+  'ok',
+  'yes',
+]);
+
+function isExperienceConfirmationInput(value: string): boolean {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s，。！？、,.!?]+/g, '');
+  return EXPERIENCE_CONFIRMATION_COMMANDS.has(normalized);
+}
+
+function getExperiencePlanFromMessage(
+  message: TaskConversationMessage
+): ExperiencePlan | null {
+  const plan = message.metadata?.plan;
+  if (!plan || typeof plan !== 'object') {
+    return null;
+  }
+  return plan as ExperiencePlan;
+}
+
+function getExperienceQuestionFromMessage(
+  message: TaskConversationMessage
+): string | null {
+  const question = message.metadata?.question;
+  return typeof question === 'string' && question.trim() ? question : null;
+}
+
+function memoryPolicyLabel(policy: ExperiencePlan['memory_policy']): string {
+  switch (policy) {
+    case 'independent_items':
+      return '独立对象：每轮只看当前对象，历史用于最终报告';
+    case 'stateful_flow':
+      return '连续状态：保留目标、进度和上一步结果';
+    default:
+      return '混合：当前对象独立分析，同时保留必要进度';
+  }
+}
+
+function ObservationWindowCard({
+  window,
+}: {
+  window: ObservationWindowProgress;
+}) {
+  const capturedCount = window.samples.length;
+  const complete = window.completed || capturedCount >= window.sampleCount;
+  const intervalLabel = Number.isInteger(window.intervalSeconds)
+    ? String(window.intervalSeconds)
+    : window.intervalSeconds.toFixed(1);
+
+  return (
+    <div className="rounded-2xl rounded-tl-sm border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-slate-700 dark:border-cyan-900/60 dark:bg-cyan-950/20 dark:text-slate-200">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-cyan-700 dark:text-cyan-300">
+          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-500/10">
+            {complete ? (
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            ) : (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            )}
+          </div>
+          <span className="font-medium">直接截帧</span>
+        </div>
+        <span className="text-xs text-slate-500 dark:text-slate-400">
+          第 {window.step} 轮 · {capturedCount}/{window.sampleCount} 张 · 间隔{' '}
+          {intervalLabel} 秒
+        </span>
+      </div>
+      <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+        {window.message ||
+          (complete
+            ? `已采集 ${capturedCount} 张截图，开始一次性多模态综合分析。`
+            : `正在按配置直接截帧，不逐张调用模型。`)}
+      </p>
+      {window.samples.length > 0 && (
+        <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
+          {window.samples.map(sample => (
+            <div key={sample.index} className="space-y-1">
+              {sample.screenshot ? (
+                <ImagePreview
+                  src={`data:image/png;base64,${sample.screenshot}`}
+                  alt={`观察截图 ${sample.index}`}
+                  maxHeight="180px"
+                />
+              ) : (
+                <div className="aspect-[9/16] rounded-lg border border-dashed border-cyan-200 dark:border-cyan-800" />
+              )}
+              <div className="text-center text-[11px] text-slate-500 dark:text-slate-400">
+                {sample.index}/{window.sampleCount}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExperiencePlanMessageCard({
+  message,
+  isLatest,
+  isConfirmed,
+  canConfirm,
+  onConfirm,
+}: {
+  message: TaskConversationMessage;
+  isLatest: boolean;
+  isConfirmed: boolean;
+  canConfirm: boolean;
+  onConfirm: () => void;
+}) {
+  const plan = getExperiencePlanFromMessage(message);
+  const question = getExperienceQuestionFromMessage(message);
+
+  if (!isLatest) {
+    return (
+      <div className="max-w-[85%] rounded-2xl rounded-tl-sm border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
+        <div className="flex items-center gap-2">
+          <ClipboardList className="h-4 w-4" />
+          <span className="font-medium">历史草案已失效</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!plan) {
+    return (
+      <div className="max-w-[85%] rounded-2xl rounded-tl-sm border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-slate-700 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-slate-200">
+        <div className="flex items-center gap-2 text-sky-700 dark:text-sky-300">
+          <ClipboardList className="h-4 w-4" />
+          <span className="font-medium">草案已更新</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-[85%] rounded-2xl rounded-tl-sm border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-slate-700 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-slate-200">
+      <div className="flex items-center gap-2 text-sky-700 dark:text-sky-300">
+        <ClipboardList className="h-4 w-4" />
+        <span className="font-medium">
+          {isConfirmed ? '已确认体验委托' : '体验任务草案'}
+        </span>
+      </div>
+      <div className="mt-3 space-y-3">
+        <div>
+          <p className="font-medium">体验目标</p>
+          <p>{plan.execution_goal}</p>
+        </div>
+        <div>
+          <p className="font-medium">重点观察</p>
+          <p>{plan.observation_targets.join(' / ')}</p>
+        </div>
+        <div>
+          <p className="font-medium">分析方法</p>
+          <p>{plan.analysis_lenses.join(' / ')}</p>
+        </div>
+        <div>
+          <p className="font-medium">评估维度</p>
+          <p>{plan.evaluation_dimensions.join(' / ')}</p>
+        </div>
+        <div>
+          <p className="font-medium">最终输出</p>
+          <p>{plan.report_request}</p>
+        </div>
+        <div>
+          <p className="font-medium">停止条件</p>
+          <p>{plan.stop_conditions.join(' / ')}</p>
+        </div>
+        <div>
+          <p className="font-medium">取证策略</p>
+          <p>{plan.sampling_strategy.join(' / ')}</p>
+        </div>
+        <div>
+          <p className="font-medium">记忆方式</p>
+          <p>{memoryPolicyLabel(plan.memory_policy)}</p>
+        </div>
+        {question && !isConfirmed && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+            {question}
+          </div>
+        )}
+        {canConfirm && (
+          <div className="pt-1 text-center text-sm text-slate-500 dark:text-slate-400">
+            可以继续修改或者
+            <a
+              href="#"
+              onClick={event => {
+                event.preventDefault();
+                onConfirm();
+              }}
+              className="ml-1 font-medium text-sky-700 underline underline-offset-4 transition-colors hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-100"
+            >
+              直接执行
+            </a>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function readImageAttachment(file: File): Promise<TaskImageAttachment> {
   return new Promise((resolve, reject) => {
@@ -103,13 +318,21 @@ function readImageAttachment(file: File): Promise<TaskImageAttachment> {
 }
 
 function getStepSummary(thinking: string | undefined, action: unknown): string {
-  if (thinking && thinking.trim().length > 0) {
-    return thinking;
-  }
-
   if (action && typeof action === 'object') {
     const actionRecord = action as Record<string, unknown>;
     const metadata = actionRecord['_metadata'];
+    const actionMessage = actionRecord['message'];
+
+    if (
+      typeof actionMessage === 'string' &&
+      actionMessage.trim().toUpperCase().startsWith('OBJECT_SUMMARY:')
+    ) {
+      const summary = actionMessage
+        .trim()
+        .replace(/^OBJECT_SUMMARY:\s*/i, '')
+        .trim();
+      return summary ? `本轮小结：\n${summary}` : actionMessage.trim();
+    }
 
     if (metadata === 'finish') {
       const finishMessage = actionRecord['message'];
@@ -126,6 +349,10 @@ function getStepSummary(thinking: string | undefined, action: unknown): string {
     if (typeof actionName === 'string' && actionName.trim().length > 0) {
       return `Action: ${actionName}`;
     }
+  }
+
+  if (thinking && thinking.trim().length > 0) {
+    return thinking;
   }
 
   return 'Action executed';
@@ -179,6 +406,20 @@ function getTimingChips(
   }
 
   return chips;
+}
+
+function getObservationWindowForStep(
+  windows: ObservationWindowProgress[] | undefined,
+  step: number
+): ObservationWindowProgress | undefined {
+  return windows?.find(window => window.step === step);
+}
+
+function getAnalysisTitle(
+  step: number,
+  observationWindow: ObservationWindowProgress | undefined
+): string {
+  return observationWindow ? `第 ${step} 轮综合分析` : `Step ${step}`;
 }
 
 function formatModelErrorDetails(details: ModelErrorDetails): string {
@@ -247,7 +488,6 @@ export function DevicePanel({
     sessionReady,
     experienceStage,
     experiencePlan,
-    experienceQuestion,
     sendMessage,
     resetConversation,
     abortConversation,
@@ -542,6 +782,22 @@ export function DevicePanel({
   }, []);
 
   const handleSend = useCallback(async () => {
+    if (
+      interactionMode === 'experience' &&
+      experiencePlan &&
+      (experienceStage === 'asking' ||
+        experienceStage === 'awaiting_confirmation') &&
+      isExperienceConfirmationInput(input)
+    ) {
+      const didConfirm = await confirmExperiencePlan();
+      if (didConfirm) {
+        setInput('');
+        setAttachments([]);
+        setAttachmentError(null);
+      }
+      return;
+    }
+
     const didSend = await sendMessage(input, attachments, {
       experienceMode: interactionMode === 'experience',
     });
@@ -552,7 +808,15 @@ export function DevicePanel({
         setAttachmentError(null);
       }
     }
-  }, [attachments, input, interactionMode, sendMessage]);
+  }, [
+    attachments,
+    confirmExperiencePlan,
+    experiencePlan,
+    experienceStage,
+    input,
+    interactionMode,
+    sendMessage,
+  ]);
 
   const handleReset = useCallback(async () => {
     await resetConversation();
@@ -683,6 +947,20 @@ export function DevicePanel({
     }
   };
 
+  const latestExperiencePlanMessageId =
+    [...messages]
+      .reverse()
+      .find(
+        message =>
+          message.role === 'assistant' &&
+          message.eventType === 'experience_plan'
+      )?.id ?? null;
+  const canConfirmLatestExperiencePlan =
+    interactionMode === 'experience' &&
+    experiencePlan !== null &&
+    (experienceStage === 'asking' ||
+      experienceStage === 'awaiting_confirmation');
+
   return (
     <div className="flex-1 flex gap-4 p-4 items-stretch justify-center min-h-0">
       {/* Chat area - takes remaining space */}
@@ -805,68 +1083,18 @@ export function DevicePanel({
 
         <div className="px-4 pt-4">
           <Tabs
+            className="mx-auto w-full max-w-sm"
             value={interactionMode}
             onValueChange={value =>
               setInteractionMode(value === 'experience' ? 'experience' : 'chat')
             }
           >
-            <TabsList className="grid w-full max-w-sm grid-cols-2">
+            <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="chat">普通对话</TabsTrigger>
               <TabsTrigger value="experience">体验任务</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
-
-        {interactionMode === 'experience' && experiencePlan && (
-          <div className="mx-4 mt-4 rounded-2xl border border-sky-200 bg-sky-50/80 p-4 dark:border-sky-900/60 dark:bg-sky-950/20">
-            <div className="flex items-center gap-2 text-sky-700 dark:text-sky-300">
-              <ClipboardList className="h-4 w-4" />
-              <span className="text-sm font-medium">
-                {experienceStage === 'running'
-                  ? '已确认体验委托'
-                  : '体验任务草案'}
-              </span>
-            </div>
-            <div className="mt-3 space-y-3 text-sm text-slate-700 dark:text-slate-200">
-              <div>
-                <p className="font-medium">体验目标</p>
-                <p>{experiencePlan.execution_goal}</p>
-              </div>
-              <div>
-                <p className="font-medium">重点观察</p>
-                <p>{experiencePlan.observation_targets.join(' / ')}</p>
-              </div>
-              <div>
-                <p className="font-medium">分析方法</p>
-                <p>{experiencePlan.analysis_lenses.join(' / ')}</p>
-              </div>
-              <div>
-                <p className="font-medium">评估维度</p>
-                <p>{experiencePlan.evaluation_dimensions.join(' / ')}</p>
-              </div>
-              <div>
-                <p className="font-medium">最终输出</p>
-                <p>{experiencePlan.report_request}</p>
-              </div>
-              <div>
-                <p className="font-medium">停止条件</p>
-                <p>{experiencePlan.stop_conditions.join(' / ')}</p>
-              </div>
-              {experienceQuestion && experienceStage !== 'running' && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
-                  {experienceQuestion}
-                </div>
-              )}
-              {experienceStage === 'awaiting_confirmation' && (
-                <div className="flex justify-end">
-                  <Button onClick={handleConfirmExperience} variant="twitter">
-                    确认并开始
-                  </Button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Messages */}
         <div className="flex-1 min-h-0 relative">
@@ -897,19 +1125,24 @@ export function DevicePanel({
                       message.role === 'user' ? 'justify-end' : 'justify-start'
                     }`}
                   >
-                    {message.role === 'assistant' && message.eventType === 'experience_plan' ? (
-                      <div className="max-w-[85%] rounded-2xl rounded-tl-sm border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-slate-700 dark:border-sky-900/60 dark:bg-sky-950/20 dark:text-slate-200">
-                        <div className="flex items-center gap-2 text-sky-700 dark:text-sky-300">
-                          <ClipboardList className="h-4 w-4" />
-                          <span className="font-medium">草案已更新</span>
-                        </div>
-                        <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                          继续用自然语言补充，或直接确认开始执行。
-                        </div>
-                      </div>
+                    {message.role === 'assistant' &&
+                    message.eventType === 'experience_plan' ? (
+                      <ExperiencePlanMessageCard
+                        message={message}
+                        isLatest={message.id === latestExperiencePlanMessageId}
+                        isConfirmed={
+                          message.id === latestExperiencePlanMessageId &&
+                          (experienceStage === 'running' ||
+                            experienceStage === 'reported')
+                        }
+                        canConfirm={
+                          message.id === latestExperiencePlanMessageId &&
+                          canConfirmLatestExperiencePlan
+                        }
+                        onConfirm={handleConfirmExperience}
+                      />
                     ) : message.role === 'assistant' ? (
                       <div className="max-w-[85%] space-y-3">
-                        {/* Step process */}
                         {Array.from(
                           {
                             length: Math.max(
@@ -929,165 +1162,206 @@ export function DevicePanel({
                           );
 
                           return (
-                            <div
-                              key={idx}
-                              className="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3"
-                            >
-                              <div className="flex items-center gap-2 mb-2">
-                                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#1d9bf0]/10">
-                                  <Sparkles className="h-3 w-3 text-[#1d9bf0]" />
-                                </div>
-                                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                                  Step {message.stepNumbers?.[idx] ?? idx + 1}
-                                </span>
-                              </div>
-                              <p className="text-sm whitespace-pre-wrap text-slate-700 dark:text-slate-300">
-                                {stepSummary}
-                              </p>
+                            <div key={idx} className="space-y-3">
+                              {(() => {
+                                const stepNumber =
+                                  message.stepNumbers?.[idx] ?? idx + 1;
+                                const observationWindow =
+                                  getObservationWindowForStep(
+                                    message.observationWindows,
+                                    stepNumber
+                                  );
+                                return (
+                                  <>
+                                    {observationWindow && (
+                                      <ObservationWindowCard
+                                        window={observationWindow}
+                                      />
+                                    )}
+                                    <div className="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3">
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#1d9bf0]/10">
+                                          <Sparkles className="h-3 w-3 text-[#1d9bf0]" />
+                                        </div>
+                                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                          {getAnalysisTitle(
+                                            stepNumber,
+                                            observationWindow
+                                          )}
+                                        </span>
+                                      </div>
+                                      <p className="text-sm whitespace-pre-wrap text-slate-700 dark:text-slate-300">
+                                        {stepSummary}
+                                      </p>
 
-                              {stepTimings && (
-                                <div className="mt-3 flex flex-wrap gap-2">
-                                  {getTimingChips(stepTimings).map(chip => (
-                                    <Badge
-                                      key={`${idx}-${chip.label}`}
-                                      variant="secondary"
-                                      className="font-mono text-[11px]"
-                                    >
-                                      {chip.label} {chip.value}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              )}
+                                      {stepTimings && (
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                          {getTimingChips(stepTimings).map(
+                                            chip => (
+                                              <Badge
+                                                key={`${idx}-${chip.label}`}
+                                                variant="secondary"
+                                                className="font-mono text-[11px]"
+                                              >
+                                                {chip.label} {chip.value}
+                                              </Badge>
+                                            )
+                                          )}
+                                        </div>
+                                      )}
 
-                              {stepScreenshot && (
-                                <div className="mt-3">
-                                  <ImagePreview
-                                    src={`data:image/png;base64,${stepScreenshot}`}
-                                    alt={`Step ${idx + 1}`}
-                                    maxHeight="350px"
-                                  >
-                                    {stepAction &&
-                                      (() => {
-                                        const parsedAction =
-                                          stepAction as ActionPayload;
-                                        const actionName = parsedAction.action;
+                                      {!observationWindow && stepScreenshot && (
+                                        <div className="mt-3">
+                                          <ImagePreview
+                                            src={`data:image/png;base64,${stepScreenshot}`}
+                                            alt={`Step ${idx + 1}`}
+                                            maxHeight="350px"
+                                          >
+                                            {stepAction &&
+                                              (() => {
+                                                const parsedAction =
+                                                  stepAction as ActionPayload;
+                                                const actionName =
+                                                  parsedAction.action;
 
-                                        if (
-                                          actionName &&
-                                          [
-                                            'Tap',
-                                            'Double Tap',
-                                            'Long Press',
-                                          ].includes(actionName)
-                                        ) {
-                                          const element = parsedAction.element;
-                                          if (
-                                            Array.isArray(element) &&
-                                            element.length === 2
-                                          ) {
-                                            const left = `${(Math.max(0, Math.min(element[0], 1000)) / 1000) * 100}%`;
-                                            const top = `${(Math.max(0, Math.min(element[1], 1000)) / 1000) * 100}%`;
-                                            return (
-                                              <div
-                                                className="absolute w-8 h-8 rounded-full border-[3px] border-red-500 bg-red-500/20 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.6)]"
-                                                style={{ left, top }}
-                                              />
-                                            );
-                                          }
-                                        }
-                                        if (actionName === 'Swipe') {
-                                          const start = parsedAction.start;
-                                          const end = parsedAction.end;
-                                          if (
-                                            Array.isArray(start) &&
-                                            start.length === 2 &&
-                                            Array.isArray(end) &&
-                                            end.length === 2
-                                          ) {
-                                            const x1 =
-                                              (Math.max(
-                                                0,
-                                                Math.min(start[0], 1000)
-                                              ) /
-                                                1000) *
-                                              100;
-                                            const y1 =
-                                              (Math.max(
-                                                0,
-                                                Math.min(start[1], 1000)
-                                              ) /
-                                                1000) *
-                                              100;
-                                            const x2 =
-                                              (Math.max(
-                                                0,
-                                                Math.min(end[0], 1000)
-                                              ) /
-                                                1000) *
-                                              100;
-                                            const y2 =
-                                              (Math.max(
-                                                0,
-                                                Math.min(end[1], 1000)
-                                              ) /
-                                                1000) *
-                                              100;
-                                            return (
-                                              <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible">
-                                                <defs>
-                                                  <marker
-                                                    id={`arrowhead-${idx}`}
-                                                    markerWidth="6"
-                                                    markerHeight="6"
-                                                    refX="5"
-                                                    refY="3"
-                                                    orient="auto"
-                                                  >
-                                                    <polygon
-                                                      points="0,0 6,3 0,6"
-                                                      fill="rgba(239,68,68,0.9)"
-                                                    />
-                                                  </marker>
-                                                </defs>
-                                                <circle
-                                                  cx={`${x1}%`}
-                                                  cy={`${y1}%`}
-                                                  r="4"
-                                                  fill="rgba(239,68,68,0.9)"
-                                                />
-                                                <line
-                                                  x1={`${x1}%`}
-                                                  y1={`${y1}%`}
-                                                  x2={`${x2}%`}
-                                                  y2={`${y2}%`}
-                                                  stroke="rgba(239,68,68,0.9)"
-                                                  strokeWidth="3"
-                                                  markerEnd={`url(#arrowhead-${idx})`}
-                                                  strokeDasharray="5 3"
-                                                />
-                                              </svg>
-                                            );
-                                          }
-                                        }
-                                        return null;
-                                      })()}
-                                  </ImagePreview>
-                                </div>
-                              )}
+                                                if (
+                                                  actionName &&
+                                                  [
+                                                    'Tap',
+                                                    'Double Tap',
+                                                    'Long Press',
+                                                  ].includes(actionName)
+                                                ) {
+                                                  const element =
+                                                    parsedAction.element;
+                                                  if (
+                                                    Array.isArray(element) &&
+                                                    element.length === 2
+                                                  ) {
+                                                    const left = `${(Math.max(0, Math.min(element[0], 1000)) / 1000) * 100}%`;
+                                                    const top = `${(Math.max(0, Math.min(element[1], 1000)) / 1000) * 100}%`;
+                                                    return (
+                                                      <div
+                                                        className="absolute w-8 h-8 rounded-full border-[3px] border-red-500 bg-red-500/20 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.6)]"
+                                                        style={{ left, top }}
+                                                      />
+                                                    );
+                                                  }
+                                                }
+                                                if (actionName === 'Swipe') {
+                                                  const start =
+                                                    parsedAction.start;
+                                                  const end = parsedAction.end;
+                                                  if (
+                                                    Array.isArray(start) &&
+                                                    start.length === 2 &&
+                                                    Array.isArray(end) &&
+                                                    end.length === 2
+                                                  ) {
+                                                    const x1 =
+                                                      (Math.max(
+                                                        0,
+                                                        Math.min(start[0], 1000)
+                                                      ) /
+                                                        1000) *
+                                                      100;
+                                                    const y1 =
+                                                      (Math.max(
+                                                        0,
+                                                        Math.min(start[1], 1000)
+                                                      ) /
+                                                        1000) *
+                                                      100;
+                                                    const x2 =
+                                                      (Math.max(
+                                                        0,
+                                                        Math.min(end[0], 1000)
+                                                      ) /
+                                                        1000) *
+                                                      100;
+                                                    const y2 =
+                                                      (Math.max(
+                                                        0,
+                                                        Math.min(end[1], 1000)
+                                                      ) /
+                                                        1000) *
+                                                      100;
+                                                    return (
+                                                      <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible">
+                                                        <defs>
+                                                          <marker
+                                                            id={`arrowhead-${idx}`}
+                                                            markerWidth="6"
+                                                            markerHeight="6"
+                                                            refX="5"
+                                                            refY="3"
+                                                            orient="auto"
+                                                          >
+                                                            <polygon
+                                                              points="0,0 6,3 0,6"
+                                                              fill="rgba(239,68,68,0.9)"
+                                                            />
+                                                          </marker>
+                                                        </defs>
+                                                        <circle
+                                                          cx={`${x1}%`}
+                                                          cy={`${y1}%`}
+                                                          r="4"
+                                                          fill="rgba(239,68,68,0.9)"
+                                                        />
+                                                        <line
+                                                          x1={`${x1}%`}
+                                                          y1={`${y1}%`}
+                                                          x2={`${x2}%`}
+                                                          y2={`${y2}%`}
+                                                          stroke="rgba(239,68,68,0.9)"
+                                                          strokeWidth="3"
+                                                          markerEnd={`url(#arrowhead-${idx})`}
+                                                          strokeDasharray="5 3"
+                                                        />
+                                                      </svg>
+                                                    );
+                                                  }
+                                                }
+                                                return null;
+                                              })()}
+                                          </ImagePreview>
+                                        </div>
+                                      )}
 
-                              {stepAction && (
-                                <details className="mt-2 text-xs">
-                                  <summary className="cursor-pointer text-[#1d9bf0] hover:text-[#1a8cd8] transition-colors">
-                                    View action
-                                  </summary>
-                                  <pre className="mt-2 p-2 bg-slate-900 text-slate-200 rounded-lg overflow-x-auto text-xs border border-slate-800">
-                                    {JSON.stringify(stepAction, null, 2)}
-                                  </pre>
-                                </details>
-                              )}
+                                      {stepAction && (
+                                        <details className="mt-2 text-xs">
+                                          <summary className="cursor-pointer text-[#1d9bf0] hover:text-[#1a8cd8] transition-colors">
+                                            View action
+                                          </summary>
+                                          <pre className="mt-2 p-2 bg-slate-900 text-slate-200 rounded-lg overflow-x-auto text-xs border border-slate-800">
+                                            {JSON.stringify(
+                                              stepAction,
+                                              null,
+                                              2
+                                            )}
+                                          </pre>
+                                        </details>
+                                      )}
+                                    </div>
+                                  </>
+                                );
+                              })()}
                             </div>
                           );
                         })}
+
+                        {message.observationWindows
+                          ?.filter(
+                            window =>
+                              !message.stepNumbers?.includes(window.step)
+                          )
+                          .map(window => (
+                            <ObservationWindowCard
+                              key={`observation-${window.step}`}
+                              window={window}
+                            />
+                          ))}
 
                         {/* Current thinking being streamed */}
                         {message.currentThinking && (
@@ -1097,7 +1371,7 @@ export function DevicePanel({
                                 <Sparkles className="h-3 w-3 text-[#1d9bf0] animate-pulse" />
                               </div>
                               <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                                Thinking...
+                                正在综合分析...
                               </span>
                             </div>
                             <p className="text-sm whitespace-pre-wrap text-slate-700 dark:text-slate-300">
@@ -1221,7 +1495,7 @@ export function DevicePanel({
 
         {/* Input area */}
         <div
-          className={`p-4 border-t border-slate-200 dark:border-slate-800 ${
+          className={`shrink-0 p-4 border-t border-slate-200 dark:border-slate-800 ${
             isDraggingAttachment
               ? 'bg-sky-50 dark:bg-sky-950/20'
               : 'bg-transparent'
@@ -1411,7 +1685,9 @@ export function DevicePanel({
                 size="icon"
                 variant="twitter"
                 className="h-10 w-10 rounded-full flex-shrink-0"
-                title={interactionMode === 'experience' ? '生成体验草案' : '发送'}
+                title={
+                  interactionMode === 'experience' ? '生成体验草案' : '发送'
+                }
               >
                 <Send className="h-4 w-4" />
               </Button>

@@ -125,6 +125,25 @@ class TestActionMapper:
             "end": [500, 300],
         }
 
+    def test_swipe_preserves_object_summary_message(self):
+        result = tool_call_to_action(
+            "swipe",
+            {
+                "start_x": 500,
+                "start_y": 700,
+                "end_x": 500,
+                "end_y": 300,
+                "message": "OBJECT_SUMMARY: 当前视频讲解热点新闻。",
+            },
+        )
+        assert result == {
+            "_metadata": "do",
+            "action": "Swipe",
+            "start": [500, 700],
+            "end": [500, 300],
+            "message": "OBJECT_SUMMARY: 当前视频讲解热点新闻。",
+        }
+
     def test_type_text(self):
         result = tool_call_to_action("type_text", {"text": "Hello"})
         assert result == {"_metadata": "do", "action": "Type", "text": "Hello"}

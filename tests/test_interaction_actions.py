@@ -13,6 +13,9 @@ from AutoGLM_GUI.model import MessageBuilder
 class FakeDevice:
     """Minimal fake device for action handler tests."""
 
+    def __init__(self) -> None:
+        self.swipes: list[tuple[int, int, int, int]] = []
+
     @property
     def device_id(self) -> str:
         return "fake-device"
@@ -30,6 +33,7 @@ class FakeDevice:
         delay: float | None = None,
     ) -> None:
         _ = (duration_ms, delay)
+        self.swipes.append((start_x, start_y, end_x, end_y))
 
     def type_text(self, text: str) -> None: ...
 
@@ -75,6 +79,7 @@ class FakeScreenshot:
 
 class StreamFakeDevice(FakeDevice):
     def __init__(self) -> None:
+        super().__init__()
         self.screenshot_calls = 0
         self.current_app_calls = 0
 
@@ -89,11 +94,13 @@ class StreamFakeDevice(FakeDevice):
 
 
 class FakeInteractionAgent(AsyncAgentBase):
-    def __init__(self, device: StreamFakeDevice) -> None:
+    def __init__(
+        self, device: StreamFakeDevice, agent_config: AgentConfig | None = None
+    ) -> None:
         self.prepared_tasks: list[str] = []
         super().__init__(
             model_config=ModelConfig(),
-            agent_config=AgentConfig(max_steps=5, verbose=False),
+            agent_config=agent_config or AgentConfig(max_steps=5, verbose=False),
             device=device,
             takeover_callback=_noop_takeover,
         )
@@ -147,6 +154,22 @@ class FakeInteractionAgent(AsyncAgentBase):
         }
 
 
+class EmptyFinishMessageAgent(FakeInteractionAgent):
+    async def _execute_step(self) -> AsyncGenerator[dict[str, Any], None]:
+        self._step_count += 1
+        yield {
+            "type": "step",
+            "data": {
+                "step": self._step_count,
+                "thinking": "finished",
+                "action": {"_metadata": "finish", "message": ""},
+                "success": True,
+                "finished": True,
+                "message": "",
+            },
+        }
+
+
 class LimitFakeAgent(AsyncAgentBase):
     def __init__(self, agent_config: AgentConfig) -> None:
         super().__init__(
@@ -175,7 +198,7 @@ class LimitFakeAgent(AsyncAgentBase):
             "data": {
                 "step": self._step_count,
                 "thinking": "continue",
-                "action": {"action": f"Tap-{self._step_count}"},
+                "action": {"action": "Tap"},
                 "success": True,
                 "finished": False,
             },
@@ -190,7 +213,7 @@ class SelfFinishingLimitFakeAgent(LimitFakeAgent):
             "data": {
                 "step": self._step_count,
                 "thinking": "finish",
-                "action": {"action": f"Tap-{self._step_count}"},
+                "action": {"action": "Tap"},
                 "success": True,
                 "finished": self._step_count >= 3,
                 "message": "done",
@@ -248,6 +271,51 @@ class TestTakeoverAction:
 
         assert result.success is True
         assert takeovers == ["login"]
+
+
+def test_object_summary_tap_message_does_not_request_confirmation() -> None:
+    device = FakeDevice()
+    confirmations: list[str] = []
+    handler = ActionHandler(
+        device,
+        confirmation_callback=lambda message: confirmations.append(message) or False,
+    )
+
+    result = handler.execute(
+        {
+            "_metadata": "do",
+            "action": "Tap",
+            "element": [500, 500],
+            "message": "OBJECT_SUMMARY: 当前视频讲特朗普建议伊朗回到谈判桌。",
+        },
+        100,
+        200,
+    )
+
+    assert result.success is True
+    assert result.should_finish is False
+    assert confirmations == []
+
+
+def test_object_summary_swipe_message_is_returned() -> None:
+    device = FakeDevice()
+    handler = ActionHandler(device)
+
+    result = handler.execute(
+        {
+            "_metadata": "do",
+            "action": "Swipe",
+            "start": [500, 800],
+            "end": [500, 200],
+            "message": "OBJECT_SUMMARY: 当前视频讲特朗普建议伊朗回到谈判桌。",
+        },
+        100,
+        200,
+    )
+
+    assert result.success is True
+    assert result.should_finish is False
+    assert result.message == "OBJECT_SUMMARY: 当前视频讲特朗普建议伊朗回到谈判桌。"
 
 
 class TestInteractAction:
@@ -391,8 +459,22 @@ class TestInteractionActionsIntegration:
         assert device.current_app_calls == 1
         assert agent.context[-1] == MessageBuilder.create_user_message("已完成登录")
 
+    def test_agent_stream_uses_default_message_for_empty_finish(self) -> None:
+        agent = EmptyFinishMessageAgent(StreamFakeDevice())
+
+        events = asyncio.run(_collect_stream(agent.stream("finish silently")))
+
+        assert [event["type"] for event in events] == ["step", "done"]
+        assert events[-1]["data"] == {
+            "message": "Task completed",
+            "steps": 1,
+            "success": True,
+        }
+
     def test_agent_stream_stops_by_steps_limit(self) -> None:
-        agent = LimitFakeAgent(AgentConfig(max_steps=2, verbose=False))
+        agent = LimitFakeAgent(
+            AgentConfig(max_steps=2, run_limit_type="steps", verbose=False)
+        )
 
         events = asyncio.run(_collect_stream(agent.stream("run by steps")))
 
@@ -400,32 +482,79 @@ class TestInteractionActionsIntegration:
         assert events[-1]["data"]["stop_reason"] == "max_steps_reached"
         assert events[-1]["data"]["steps"] == 2
 
-    def test_agent_stream_duration_limit_ignores_max_steps(self) -> None:
+    def test_agent_stream_autonomous_accepts_model_finish(self) -> None:
+        agent = SelfFinishingLimitFakeAgent(
+            AgentConfig(max_steps=1, run_limit_type="autonomous", verbose=False)
+        )
+
+        events = asyncio.run(_collect_stream(agent.stream("run autonomously")))
+
+        assert [event["type"] for event in events] == ["step", "step", "step", "done"]
+        assert events[-1]["data"]["message"] == "done"
+        assert events[-1]["data"]["steps"] == 3
+
+    def test_agent_stream_duration_limit_suppresses_model_finish(self) -> None:
         agent = SelfFinishingLimitFakeAgent(
             AgentConfig(
                 max_steps=1,
                 run_limit_type="duration",
-                max_duration_seconds=3600,
+                max_duration_seconds=0.01,
                 verbose=False,
             )
         )
 
         events = asyncio.run(_collect_stream(agent.stream("run by duration")))
 
-        assert [event["type"] for event in events] == ["step", "step", "step", "done"]
-        assert events[-1]["data"]["message"] == "done"
-        assert events[-1]["data"]["steps"] == 3
+        assert any(
+            event["type"] == "step" and event["data"].get("finish_suppressed")
+            for event in events
+        )
+        assert events[-1]["type"] == "done"
+        assert events[-1]["data"]["stop_reason"] in {
+            "max_duration_reached",
+            "watchdog_repeated_actions",
+            "strict_finish_loop",
+        }
 
-    def test_agent_stream_unlimited_ignores_max_steps(self) -> None:
+    def test_agent_stream_unlimited_suppresses_model_finish_until_watchdog(
+        self,
+    ) -> None:
         agent = SelfFinishingLimitFakeAgent(
             AgentConfig(max_steps=1, run_limit_type="unlimited", verbose=False)
         )
 
         events = asyncio.run(_collect_stream(agent.stream("run unlimited")))
 
-        assert [event["type"] for event in events] == ["step", "step", "step", "done"]
-        assert events[-1]["data"]["message"] == "done"
-        assert events[-1]["data"]["steps"] == 3
+        assert any(
+            event["type"] == "step" and event["data"].get("finish_suppressed")
+            for event in events
+        )
+        assert events[-1]["type"] == "done"
+        assert events[-1]["data"]["stop_reason"] == "strict_finish_loop"
+
+    def test_agent_stream_unlimited_empty_finish_stops_with_clear_reason(
+        self,
+    ) -> None:
+        agent = EmptyFinishMessageAgent(
+            StreamFakeDevice(),
+            agent_config=AgentConfig(
+                max_steps=None,
+                run_limit_type="unlimited",
+                verbose=False,
+            ),
+        )
+
+        events = asyncio.run(_collect_stream(agent.stream("run unlimited")))
+
+        suppressed_steps = [
+            event
+            for event in events
+            if event["type"] == "step" and event["data"].get("finish_suppressed")
+        ]
+        assert len(suppressed_steps) == 2
+        assert events[-1]["type"] == "done"
+        assert events[-1]["data"]["stop_reason"] == "strict_empty_finish_loop"
+        assert "OBJECT_SUMMARY" in events[-1]["data"]["message"]
 
 
 async def _collect_stream(stream: Any) -> list[dict[str, Any]]:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from AutoGLM_GUI.task_manager import TaskManager
+from AutoGLM_GUI.task_manager import TaskManager, _infer_memory_policy
 from AutoGLM_GUI.task_store import TaskStatus, TaskStore
 
 
@@ -184,6 +184,55 @@ def test_task_manager_can_cancel_running_task(tmp_path: Path) -> None:
 
         current = await manager.cancel_task(str(task["id"]))
         assert current is not None
+
+        final_task = await manager.wait_for_task(str(task["id"]), timeout=2)
+        assert final_task is not None
+        assert final_task["status"] == TaskStatus.CANCELLED.value
+        assert final_task["stop_reason"] == "user_stopped"
+
+        await manager.shutdown()
+        store.close()
+
+    asyncio.run(scenario())
+
+
+def test_task_manager_cancel_running_task_interrupts_executor_and_emits_event(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        store = TaskStore(tmp_path / "tasks.db")
+        manager = TaskManager(store)
+        running = asyncio.Event()
+        executor_cancelled = asyncio.Event()
+
+        async def blocking_executor(task: dict[str, object]) -> None:
+            running.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                executor_cancelled.set()
+                raise
+
+        manager.register_executor("fake", blocking_executor)
+
+        task = store.create_task_run(
+            source="chat",
+            executor_key="fake",
+            device_id="device-a",
+            device_serial="serial-a",
+            input_text="cancel me",
+        )
+        manager._completion_events[str(task["id"])] = asyncio.Event()
+
+        await manager.start()
+        await asyncio.wait_for(running.wait(), timeout=2)
+
+        current = await manager.cancel_task(str(task["id"]))
+        assert current is not None
+
+        await asyncio.wait_for(executor_cancelled.wait(), timeout=2)
+        events = store.list_task_events(str(task["id"]))
+        assert any(event["event_type"] == "cancelled" for event in events)
 
         final_task = await manager.wait_for_task(str(task["id"]), timeout=2)
         assert final_task is not None
@@ -454,8 +503,177 @@ def test_submit_chat_task_uses_layered_executor_for_layered_sessions(
 
 def test_report_request_detection_avoids_plain_app_operations() -> None:
     assert TaskManager._looks_like_report_request("请按缺陷、亮点输出报告") is True
+    assert (
+        TaskManager._looks_like_report_request(
+            "我刚才看了什么视频 给我一个汇总 并且介绍下视频内容"
+        )
+        is True
+    )
+    assert TaskManager._looks_like_report_request("刚才第二个详细讲下") is True
+    assert (
+        TaskManager._looks_like_report_request(
+            "观看抖音视频 每个视频根据画面主体和视频文案 生成总结后自动切下一个视频"
+        )
+        is False
+    )
+    assert (
+        TaskManager._looks_like_report_request("继续按照刚才策略观看下一个视频并总结")
+        is False
+    )
+    assert (
+        TaskManager._looks_like_report_request("调整策略 改成每个视频先看20秒再总结")
+        is False
+    )
     assert TaskManager._looks_like_report_request("open the report page") is False
     assert TaskManager._looks_like_report_request("打开报告页面") is False
+
+
+def test_experience_execution_input_enforces_iterative_item_sampling() -> None:
+    execution_input = TaskManager._build_experience_execution_input(
+        "依次浏览每个商品详情，停留一段时间观察卖点和价格，提炼内容要点后切换下一个",
+        {
+            "plan": {
+                "execution_goal": "逐项观察商品详情",
+                "observation_targets": ["单个观察对象的连续状态变化"],
+                "analysis_lenses": ["同一对象多次采样后的综合判断"],
+                "evaluation_dimensions": ["系统设计"],
+                "report_request": "输出内容要点分析",
+                "stop_conditions": ["完成若干对象的逐项观察、提炼与切换后停止"],
+                "memory_policy": "independent_items",
+                "sampling_strategy": [
+                    "对每个被观察对象按观察窗口配置完成间隔截图/观察，不要只凭单张截图下结论",
+                    "切换到下一个对象前，先综合当前对象观察窗口内的多帧采样，提炼内容、状态变化和关键证据",
+                ],
+            }
+        },
+        observation_window_screenshot_count=4,
+        observation_window_interval_seconds=2.5,
+    )
+
+    assert "取证策略：" in execution_input
+    assert "语义拆解协议：" in execution_input
+    assert (
+        "观察对象可以是视频、商品、帖子、页面、关卡、任务、流程阶段" in execution_input
+    )
+    assert (
+        "观察窗口会按当前系统观察窗口配置完成 4 张截图、间隔 2.5 秒的多帧采样"
+        in execution_input
+    )
+    assert "未完成当前对象的观察窗口综合分析前，禁止使用 Swipe" in execution_input
+    assert (
+        "当前对象是什么、当前观察窗口是否已足以小结、是否已经满足切换条件"
+        in execution_input
+    )
+    assert "记忆方式：独立对象模式" in execution_input
+    assert 'message="OBJECT_SUMMARY: ..."' in execution_input
+
+
+def test_experience_execution_input_infers_iterative_sampling_from_goal_semantics() -> (
+    None
+):
+    execution_input = TaskManager._build_experience_execution_input(
+        "帮我打开抖音 观看视频 每个视频观看足够时长 "
+        "然后提炼视频内容 之后切换下一个视频",
+        {
+            "plan": {
+                "execution_goal": "打开抖音并逐项观察内容",
+                "observation_targets": ["画面内容", "字幕/口播/音乐"],
+                "analysis_lenses": ["内容节奏", "观看吸引力"],
+                "evaluation_dimensions": ["内容表达"],
+                "report_request": "提炼视频内容",
+                "stop_conditions": ["完成若干对象的逐项观察、提炼与切换后停止"],
+                "memory_policy": "independent_items",
+                "sampling_strategy": ["保留关键截图与证据"],
+            }
+        },
+    )
+
+    assert "根据用户自然语言语义自行拆解执行结构" in execution_input
+    assert "当前任务包含动态/连续画面观察语义" in execution_input
+    assert "当前任务包含逐项对象观察语义" in execution_input
+    assert "未完成当前对象的观察窗口综合分析前，禁止使用 Swipe" in execution_input
+    assert "小结不能只写在思考中" in execution_input
+    assert "切换后必须把新对象当作新的观察对象重新计数" in execution_input
+    assert "禁止在只完成 1 个对象后 finish" in execution_input
+    assert "开放式逐项循环任务不要主动提前结束" in execution_input
+    assert "记忆方式：独立对象模式" in execution_input
+
+
+def test_chat_execution_input_wraps_iterative_observation_task() -> None:
+    execution_input = TaskManager._build_chat_execution_input(
+        "观看抖音视频 每个视频根据画面主体和视频文案 生成总结后自动切下一个视频 同样总结",
+        observation_window_screenshot_count=10,
+        observation_window_interval_seconds=2,
+    )
+
+    assert "Android 自然语言任务" in execution_input
+    assert "当前任务包含动态/连续画面观察语义" in execution_input
+    assert "当前任务包含逐项对象观察语义" in execution_input
+    assert (
+        "观察窗口会按当前系统观察窗口配置完成 10 张截图、间隔 2 秒的多帧采样"
+        in execution_input
+    )
+    assert '本次 do(...) 动作必须携带 message="OBJECT_SUMMARY: ..."' in execution_input
+    assert "根据用户语义自动选择结构" in execution_input
+    assert "视频任务偏内容/文案/画面/观点" in execution_input
+    assert "App 体验偏流程/交互/状态变化/问题" in execution_input
+    assert "游戏任务偏目标/操作反馈/关卡机制/体验卡点" in execution_input
+    assert "不要预设 UI、数据、来源、互动指标一定是主体或补充" in execution_input
+    assert "UI 与交互状态通常就是核心证据" in execution_input
+    assert "如果使用 Tap、Swipe、Back" in execution_input
+    assert "禁止在只完成 1 个对象后 finish" in execution_input
+    assert "不要主动提前结束" in execution_input
+
+
+def test_chat_execution_input_leaves_plain_task_unchanged() -> None:
+    message = "打开设置页面"
+
+    assert TaskManager._build_chat_execution_input(message) == message
+
+
+def test_memory_policy_inference_for_plain_chat_tasks() -> None:
+    assert (
+        _infer_memory_policy(
+            "观看抖音视频 每个视频根据画面主体和视频文案生成总结后自动切下一个视频"
+        )
+        == "independent_items"
+    )
+    assert _infer_memory_policy("体验这个游戏的新手任务流程") == "stateful_flow"
+
+
+def test_experience_requires_observation_window_from_semantics() -> None:
+    dynamic_experience = {
+        "plan": {
+            "execution_goal": "观看并逐项提炼内容",
+            "observation_targets": ["画面内容", "字幕/口播/音乐"],
+            "analysis_lenses": ["内容节奏"],
+            "stop_conditions": ["完成若干对象的逐项观察、提炼与切换后停止"],
+            "sampling_strategy": ["保留关键截图与证据"],
+        }
+    }
+    plain_experience = {
+        "plan": {
+            "execution_goal": "打开设置页面",
+            "observation_targets": ["设置入口"],
+            "analysis_lenses": ["路径是否可达"],
+            "stop_conditions": ["进入设置后停止"],
+            "sampling_strategy": ["保留关键截图"],
+        }
+    }
+
+    assert (
+        TaskManager._experience_requires_observation_window(
+            "帮我打开抖音 观看视频 每个视频观看足够时长 然后提炼视频内容 之后切换下一个视频",
+            dynamic_experience,
+        )
+        is True
+    )
+    assert (
+        TaskManager._experience_requires_observation_window(
+            "打开设置", plain_experience
+        )
+        is False
+    )
 
 
 def test_followup_report_request_uses_retained_experience_context(
@@ -576,6 +794,122 @@ def test_followup_report_request_uses_retained_experience_context(
             and event["payload"]["content"] == "generated report"
             for event in events
         )
+
+        await manager.shutdown()
+        store.close()
+
+    asyncio.run(scenario())
+
+
+def test_followup_what_watched_request_uses_object_summaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import AutoGLM_GUI.experience_report as experience_report_module
+
+    async def fake_generate_experience_report(*, report_request, context):
+        assert report_request == "我刚才看了什么视频 给我一个汇总 并且介绍下视频内容"
+        assert "# Observed Item Summaries" in context.text
+        assert "特朗普建议伊朗回到谈判桌" in context.text
+        assert "大专生求职建议" in context.text
+        return "刚才看了两个视频：热点新闻和求职建议。"
+
+    async def fake_generate_experience_segment_summary(
+        *,
+        source_task,
+        start_step,
+        end_step,
+        segment_text,
+    ):
+        _ = (source_task, start_step, end_step)
+        assert "OBJECT_SUMMARY" in segment_text
+        return "segment summary with two watched videos"
+
+    monkeypatch.setattr(
+        experience_report_module,
+        "generate_experience_report",
+        fake_generate_experience_report,
+    )
+    monkeypatch.setattr(
+        experience_report_module,
+        "generate_experience_segment_summary",
+        fake_generate_experience_segment_summary,
+    )
+
+    async def scenario() -> None:
+        store = TaskStore(tmp_path / "tasks.db")
+        manager = TaskManager(store)
+        monkeypatch.setattr(manager, "_ensure_worker", lambda device_id: None)
+        session = await manager.create_chat_session(
+            device_id="device-a",
+            device_serial="serial-a",
+            mode="classic",
+        )
+        source_task = store.create_task_run(
+            source="chat",
+            executor_key="classic_chat",
+            session_id=session["id"],
+            device_id="device-a",
+            device_serial="serial-a",
+            input_text=(
+                "观看抖音视频 每个视频根据画面主体和视频文案 "
+                "生成总结后自动切下一个视频 同样总结"
+            ),
+        )
+        store.append_event(
+            task_id=source_task["id"],
+            event_type="step",
+            role="assistant",
+            payload={
+                "step": 1,
+                "thinking": "summarize current video then swipe",
+                "action": {
+                    "action": "Swipe",
+                    "message": "OBJECT_SUMMARY: 视频1：特朗普建议伊朗回到谈判桌。",
+                },
+                "success": True,
+                "finished": False,
+            },
+        )
+        store.append_event(
+            task_id=source_task["id"],
+            event_type="step",
+            role="assistant",
+            payload={
+                "step": 2,
+                "thinking": "summarize current video then swipe",
+                "action": {
+                    "action": "Swipe",
+                    "message": "OBJECT_SUMMARY: 视频2：大专生求职建议，学习装机和服务器售后。",
+                },
+                "success": True,
+                "finished": False,
+            },
+        )
+        store.update_task_terminal(
+            task_id=source_task["id"],
+            status=TaskStatus.CANCELLED.value,
+            final_message="Task cancelled by user",
+            error_message="Task cancelled by user",
+            stop_reason="user_stopped",
+            step_count=2,
+        )
+
+        report_task = await manager.submit_chat_task(
+            session_id=session["id"],
+            device_id="device-a",
+            device_serial="serial-a",
+            message="我刚才看了什么视频 给我一个汇总 并且介绍下视频内容",
+        )
+
+        assert report_task["executor_key"] == "experience_report"
+        task = store.get_task(report_task["id"])
+        assert task is not None
+        await manager._execute_experience_report(task)
+
+        completed = store.get_task(report_task["id"])
+        assert completed is not None
+        assert completed["status"] == TaskStatus.SUCCEEDED.value
+        assert completed["final_message"] == "刚才看了两个视频：热点新闻和求职建议。"
 
         await manager.shutdown()
         store.close()
@@ -920,9 +1254,7 @@ def test_classic_experience_task_generates_report_in_same_task(
         await manager._execute_classic_chat(task)
 
         events = store.list_task_events(task["id"])
-        assert any(
-            event["event_type"] == "experience_report" for event in events
-        )
+        assert any(event["event_type"] == "experience_report" for event in events)
         completed = store.get_task(task["id"])
         assert completed is not None
         assert completed["final_message"] == "experience report"

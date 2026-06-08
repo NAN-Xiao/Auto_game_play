@@ -163,7 +163,8 @@ class ActionHandler:
 
         x, y = self._convert_relative_to_absolute(element, width, height)
 
-        if "message" in action:
+        needs_confirmation = not self._is_object_summary_message(action)
+        if "message" in action and needs_confirmation:
             if not self.confirmation_callback(action["message"]):
                 return ActionResult(
                     success=False,
@@ -172,7 +173,16 @@ class ActionHandler:
                 )
 
         self.device.tap(x, y)
+        if self._is_object_summary_message(action):
+            return ActionResult(True, False, message=action["message"])
         return ActionResult(True, False)
+
+    @staticmethod
+    def _is_object_summary_message(action: dict[str, Any]) -> bool:
+        action_message = action.get("message")
+        return isinstance(
+            action_message, str
+        ) and action_message.strip().upper().startswith("OBJECT_SUMMARY:")
 
     _ADB_IME = "com.android.adbkeyboard/.AdbIME"
 
@@ -228,12 +238,16 @@ class ActionHandler:
         end_x, end_y = self._convert_relative_to_absolute(end, width, height)
 
         self.device.swipe(start_x, start_y, end_x, end_y)
+        if self._is_object_summary_message(action):
+            return ActionResult(True, False, message=action["message"])
         return ActionResult(True, False)
 
     def _handle_back(
         self, action: dict[str, Any], width: int, height: int
     ) -> ActionResult:
         self.device.back()
+        if self._is_object_summary_message(action):
+            return ActionResult(True, False, message=action["message"])
         return ActionResult(True, False)
 
     def _handle_home(

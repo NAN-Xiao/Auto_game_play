@@ -44,6 +44,8 @@ SYSTEM_PROMPT = (
     Take_over是接管操作，表示在登录和验证阶段需要用户协助。
 - do(action="Swipe", start=[x1,y1], end=[x2,y2])  
     Swipe是滑动操作,通过从起始坐标拖动到结束坐标来执行滑动手势。可用于滚动内容、在屏幕之间导航、下拉通知栏以及项目栏或进行基于手势的导航。坐标系统从左上角 (0,0) 开始到右下角(999,999)结束。滑动持续时间会自动调整以实现自然的移动。此操作完成后,您将自动收到结果状态的截图。
+- do(action="Swipe", start=[x1,y1], end=[x2,y2], message="OBJECT_SUMMARY: xxx")  
+    当用户要求逐个对象总结后再切换下一个对象时，切换动作必须带 message 写入当前对象小结。
 - do(action="Note", message="True")  
     记录当前页面内容以便后续总结。
 - do(action="Call_API", instruction="xxx")  

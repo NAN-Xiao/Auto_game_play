@@ -49,6 +49,23 @@ export interface TaskConversationMessage {
   attachments?: TaskImageAttachment[];
   eventType?: string;
   metadata?: Record<string, unknown>;
+  observationWindows?: ObservationWindowProgress[];
+}
+
+export interface ObservationWindowSample {
+  index: number;
+  screenshot?: string;
+  width?: number;
+  height?: number;
+}
+
+export interface ObservationWindowProgress {
+  step: number;
+  sampleCount: number;
+  intervalSeconds: number;
+  samples: ObservationWindowSample[];
+  message?: string;
+  completed: boolean;
 }
 
 interface UseTaskSessionConversationOptions {
@@ -99,6 +116,26 @@ function isTaskActive(status: TaskStatus): boolean {
 
 function isTaskWaitingForDevice(task: TaskRunResponse): boolean {
   return task.status === 'QUEUED';
+}
+
+function hasRetainedExperienceCandidate(
+  tasks: Record<string, TaskRunResponse>
+): boolean {
+  return Object.values(tasks).some(
+    task =>
+      task.source === 'chat' &&
+      ['classic_chat', 'layered_chat'].includes(task.executor_key) &&
+      task.step_count > 0 &&
+      !isTaskActive(task.status)
+  );
+}
+
+function isExperienceDraftStage(stage: ExperienceConversationStage): boolean {
+  return (
+    stage === 'drafting' ||
+    stage === 'asking' ||
+    stage === 'awaiting_confirmation'
+  );
 }
 
 function applyTaskEventToTask(
@@ -164,6 +201,14 @@ function reconcileTaskRun(
   );
 }
 
+function shouldHideTaskUserMessage(events: TaskEventRecordResponse[]): boolean {
+  const userEvent = events.find(event => event.event_type === 'user_message');
+  return Boolean(
+    userEvent?.payload.experience &&
+    typeof userEvent.payload.experience === 'object'
+  );
+}
+
 function buildAssistantMessage(
   task: TaskRunResponse,
   events: TaskEventRecordResponse[]
@@ -173,6 +218,8 @@ function buildAssistantMessage(
   const screenshots: (string | undefined)[] = [];
   const stepTimings: (StepTimingSummary | undefined)[] = [];
   const stepNumbers: number[] = [];
+  const observationWindows: ObservationWindowProgress[] = [];
+  const observationWindowByStep = new Map<number, ObservationWindowProgress>();
   let errorDetails: ModelErrorDetails | undefined;
   let currentThinking = '';
   let content = task.final_message || task.error_message || '';
@@ -193,6 +240,67 @@ function buildAssistantMessage(
         const chunk = payload.chunk;
         if (typeof chunk === 'string') {
           currentThinking += chunk;
+        }
+        break;
+      }
+      case 'observation': {
+        const step =
+          typeof payload.step === 'number' ? payload.step : steps + 1;
+        const sampleCount =
+          typeof payload.sample_count === 'number' ? payload.sample_count : 1;
+        const intervalSeconds =
+          typeof payload.interval_seconds === 'number'
+            ? payload.interval_seconds
+            : 0;
+        let observationWindow = observationWindowByStep.get(step);
+        if (!observationWindow) {
+          observationWindow = {
+            step,
+            sampleCount,
+            intervalSeconds,
+            samples: [],
+            completed: false,
+          };
+          observationWindowByStep.set(step, observationWindow);
+          observationWindows.push(observationWindow);
+        } else {
+          observationWindow.sampleCount = sampleCount;
+          observationWindow.intervalSeconds = intervalSeconds;
+        }
+
+        if (typeof payload.message === 'string' && payload.message.trim()) {
+          observationWindow.message = payload.message;
+        }
+
+        if (
+          payload.phase === 'sample' &&
+          typeof payload.sample_index === 'number'
+        ) {
+          const sampleIndex = payload.sample_index;
+          const existingIndex = observationWindow.samples.findIndex(
+            sample => sample.index === sampleIndex
+          );
+          const sample = {
+            index: sampleIndex,
+            screenshot:
+              typeof payload.screenshot === 'string'
+                ? payload.screenshot
+                : undefined,
+            width:
+              typeof payload.width === 'number' ? payload.width : undefined,
+            height:
+              typeof payload.height === 'number' ? payload.height : undefined,
+          };
+          if (existingIndex >= 0) {
+            observationWindow.samples[existingIndex] = sample;
+          } else {
+            observationWindow.samples.push(sample);
+            observationWindow.samples.sort((a, b) => a.index - b.index);
+          }
+        }
+
+        if (payload.phase === 'complete') {
+          observationWindow.completed = true;
         }
         break;
       }
@@ -302,12 +410,14 @@ function buildAssistantMessage(
     success,
     isStreaming: isTaskActive(task.status),
     currentThinking: currentThinking || undefined,
+    observationWindows,
   };
 }
 
 function buildMessagePair(
   task: TaskRunResponse,
-  events: TaskEventRecordResponse[]
+  events: TaskEventRecordResponse[],
+  options: { hideUserMessage?: boolean } = {}
 ): TaskConversationMessage[] {
   const userEvent = events.find(event => event.event_type === 'user_message');
   const userPayload = userEvent?.payload || {};
@@ -323,6 +433,11 @@ function buildMessagePair(
   const eventMessage =
     typeof userPayload.message === 'string' ? userPayload.message : null;
 
+  const assistantMessage = buildAssistantMessage(task, events);
+  if (options.hideUserMessage || shouldHideTaskUserMessage(events)) {
+    return [assistantMessage];
+  }
+
   return [
     {
       id: `${task.id}-user`,
@@ -331,7 +446,7 @@ function buildMessagePair(
       timestamp: new Date(task.created_at),
       attachments: eventAttachments,
     },
-    buildAssistantMessage(task, events),
+    assistantMessage,
   ];
 }
 
@@ -360,13 +475,14 @@ export function useTaskSessionConversation({
   const [experienceQuestion, setExperienceQuestion] = useState<string | null>(
     null
   );
-  const [experienceConversation, setExperienceConversation] = useState<string[]>(
-    []
-  );
+  const [experienceConversation, setExperienceConversation] = useState<
+    string[]
+  >([]);
   const chatStreamRef = useRef<{ close: () => void } | null>(null);
   const currentTaskIdRef = useRef<string | null>(null);
   const taskRunsRef = useRef<Record<string, TaskRunResponse>>({});
   const taskEventsRef = useRef<Record<string, TaskEventRecordResponse[]>>({});
+  const hiddenTaskUserMessagesRef = useRef<Set<string>>(new Set());
 
   const replaceTaskMessages = useCallback((taskId: string) => {
     const task = taskRunsRef.current[taskId];
@@ -374,28 +490,45 @@ export function useTaskSessionConversation({
       return;
     }
 
-    const pair = buildMessagePair(task, taskEventsRef.current[taskId] || []);
+    const pair = buildMessagePair(task, taskEventsRef.current[taskId] || [], {
+      hideUserMessage: hiddenTaskUserMessagesRef.current.has(taskId),
+    });
     setMessages(previousMessages => {
-      const userIndex = previousMessages.findIndex(
-        msg => msg.id === pair[0].id
+      const userMessage = pair.find(message => message.role === 'user');
+      const assistantMessage = pair.find(
+        message => message.role === 'assistant'
       );
-      const assistantIndex = previousMessages.findIndex(
-        msg => msg.id === pair[1].id
-      );
-
-      if (userIndex === -1 || assistantIndex === -1) {
-        return [...previousMessages, ...pair];
+      if (!assistantMessage) {
+        return previousMessages;
       }
 
-      return previousMessages.map(message => {
-        if (message.id === pair[0].id) {
-          return pair[0];
+      let sawUser = false;
+      let sawAssistant = false;
+      const nextMessages: TaskConversationMessage[] = [];
+
+      previousMessages.forEach(message => {
+        if (message.id === `${taskId}-user`) {
+          sawUser = true;
+          if (userMessage) {
+            nextMessages.push(userMessage);
+          }
+          return;
         }
-        if (message.id === pair[1].id) {
-          return pair[1];
+        if (message.id === `${taskId}-agent`) {
+          sawAssistant = true;
+          nextMessages.push(assistantMessage);
+          return;
         }
-        return message;
+        nextMessages.push(message);
       });
+
+      if (!sawUser && userMessage) {
+        nextMessages.push(userMessage);
+      }
+      if (!sawAssistant) {
+        nextMessages.push(assistantMessage);
+      }
+      return nextMessages;
     });
   }, []);
 
@@ -599,7 +732,8 @@ export function useTaskSessionConversation({
     async (
       input: string,
       attachments: TaskImageAttachment[] = [],
-      experiencePayload?: ExperienceExecutionPayload
+      experiencePayload?: ExperienceExecutionPayload,
+      options: { hideUserMessage?: boolean } = {}
     ) => {
       const inputValue = input.trim();
       const messageValue =
@@ -632,6 +766,9 @@ export function useTaskSessionConversation({
 
         taskRunsRef.current[task.id] = reconciledTask;
         taskEventsRef.current[task.id] = initialEvents;
+        if (options.hideUserMessage) {
+          hiddenTaskUserMessagesRef.current.add(task.id);
+        }
         currentTaskIdRef.current = isTaskActive(reconciledTask.status)
           ? task.id
           : null;
@@ -682,6 +819,12 @@ export function useTaskSessionConversation({
     ) => {
       if (options?.experienceMode && !options.experiencePayload) {
         const inputValue = input.trim();
+        if (
+          hasRetainedExperienceCandidate(taskRunsRef.current) &&
+          !isExperienceDraftStage(experienceStage)
+        ) {
+          return submitTask(input, attachments);
+        }
         if (!inputValue || loading) {
           return false;
         }
@@ -736,7 +879,7 @@ export function useTaskSessionConversation({
 
       return submitTask(input, attachments, options?.experiencePayload);
     },
-    [experienceConversation, loading, submitTask]
+    [experienceConversation, experienceStage, loading, submitTask]
   );
 
   const confirmExperiencePlan = useCallback(async () => {
@@ -745,11 +888,16 @@ export function useTaskSessionConversation({
     }
     const goal =
       experienceConversation.join('\n').trim() || experiencePlan.execution_goal;
-    return submitTask(goal, [], {
+    return submitTask(
       goal,
-      plan: experiencePlan,
-      auto_generate_report: true,
-    });
+      [],
+      {
+        goal,
+        plan: experiencePlan,
+        auto_generate_report: true,
+      },
+      { hideUserMessage: true }
+    );
   }, [experienceConversation, experiencePlan, submitTask]);
 
   const resetConversation = useCallback(async () => {
@@ -764,6 +912,7 @@ export function useTaskSessionConversation({
       setSessionId(session.id);
       taskRunsRef.current = {};
       taskEventsRef.current = {};
+      hiddenTaskUserMessagesRef.current.clear();
       currentTaskIdRef.current = null;
       setMessages([]);
       setLoading(false);
@@ -793,11 +942,26 @@ export function useTaskSessionConversation({
     setAborting(true);
     try {
       const response = await cancelTaskRun(taskId);
-      if (response.task) {
-        taskRunsRef.current[taskId] = response.task;
-        setWaitingForDevice(isTaskWaitingForDevice(response.task));
+      const responseTask = response.task || taskRunsRef.current[taskId];
+      if (responseTask) {
+        const cancelledTask: TaskRunResponse = {
+          ...responseTask,
+          status: 'CANCELLED',
+          final_message: 'Task cancelled by user',
+          error_message: 'Task cancelled by user',
+          stop_reason: 'user_stopped',
+          finished_at: responseTask.finished_at || new Date().toISOString(),
+        };
+        taskRunsRef.current[taskId] = cancelledTask;
+        setWaitingForDevice(isTaskWaitingForDevice(cancelledTask));
         replaceTaskMessages(taskId);
       }
+      currentTaskIdRef.current = null;
+      setLoading(false);
+      setAborting(false);
+      setWaitingForDevice(false);
+      setWaitingForUserInteraction(false);
+      setInteractionPrompt(null);
     } catch (abortError) {
       console.error('Failed to abort chat:', abortError);
       setAborting(false);

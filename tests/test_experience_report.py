@@ -297,3 +297,54 @@ def test_experience_report_context_prefers_segment_summaries(
     assert context.step_count == 90
 
     store.close()
+
+
+def test_experience_report_context_keeps_object_summaries_with_segments(
+    tmp_path: Path,
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    source_task = _create_source_task_with_steps(store, step_count=2)
+    store.append_event(
+        task_id=source_task["id"],
+        event_type="experience_segment_summary",
+        role="system",
+        payload={
+            "version": "v1",
+            "segment_step_size": 30,
+            "start_step": 1,
+            "end_step": 2,
+            "summary": "cached compressed trajectory",
+        },
+    )
+    store.append_event(
+        task_id=source_task["id"],
+        event_type="step",
+        role="assistant",
+        payload={
+            "step": 3,
+            "action": {
+                "action": "Swipe",
+                "message": "OBJECT_SUMMARY: 视频1：特朗普建议伊朗回到谈判桌。",
+            },
+            "success": True,
+            "finished": False,
+        },
+    )
+    store.update_task_terminal(
+        task_id=source_task["id"],
+        status=TaskStatus.CANCELLED.value,
+        final_message="Task cancelled by user",
+        error_message="Task cancelled by user",
+        stop_reason="user_stopped",
+        step_count=3,
+    )
+    source_task = store.get_task(source_task["id"]) or source_task
+
+    context = build_experience_report_context(store=store, source_task=source_task)
+
+    assert "# Observed Item Summaries" in context.text
+    assert "特朗普建议伊朗回到谈判桌" in context.text
+    assert "# Segment Summaries" in context.text
+    assert "cached compressed trajectory" in context.text
+
+    store.close()

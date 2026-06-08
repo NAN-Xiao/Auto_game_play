@@ -25,6 +25,10 @@ DEVICE_TOOLS = [
                         "minimum": 0,
                         "maximum": 1000,
                     },
+                    "message": {
+                        "type": "string",
+                        "description": "Optional visible note for the user. For iterative object tasks, include OBJECT_SUMMARY before switching.",
+                    },
                 },
                 "required": ["x", "y"],
             },
@@ -50,6 +54,10 @@ DEVICE_TOOLS = [
                         "minimum": 0,
                         "maximum": 1000,
                     },
+                    "message": {
+                        "type": "string",
+                        "description": "Optional visible note for the user. For iterative object tasks, include OBJECT_SUMMARY before switching.",
+                    },
                 },
                 "required": ["x", "y"],
             },
@@ -74,6 +82,10 @@ DEVICE_TOOLS = [
                         "description": "Y coordinate (0-1000)",
                         "minimum": 0,
                         "maximum": 1000,
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Optional visible note for the user. For iterative object tasks, include OBJECT_SUMMARY before switching.",
                     },
                 },
                 "required": ["x", "y"],
@@ -112,6 +124,10 @@ DEVICE_TOOLS = [
                         "minimum": 0,
                         "maximum": 1000,
                     },
+                    "message": {
+                        "type": "string",
+                        "description": "Optional visible note for the user. For iterative object tasks, include OBJECT_SUMMARY before switching.",
+                    },
                 },
                 "required": ["start_x", "start_y", "end_x", "end_y"],
             },
@@ -140,6 +156,10 @@ DEVICE_TOOLS = [
                 "type": "object",
                 "properties": {
                     "app_name": {"type": "string", "description": "App name"},
+                    "message": {
+                        "type": "string",
+                        "description": "Optional visible note for the user.",
+                    },
                 },
                 "required": ["app_name"],
             },
@@ -150,7 +170,15 @@ DEVICE_TOOLS = [
         "function": {
             "name": "back",
             "description": "Press the Back button.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "Optional visible note for the user. For iterative object tasks, include OBJECT_SUMMARY before switching.",
+                    },
+                },
+            },
         },
     },
     {
@@ -158,7 +186,15 @@ DEVICE_TOOLS = [
         "function": {
             "name": "home",
             "description": "Press the Home button.",
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "Optional visible note for the user.",
+                    },
+                },
+            },
         },
     },
     {
@@ -170,6 +206,10 @@ DEVICE_TOOLS = [
                 "type": "object",
                 "properties": {
                     "duration": {"type": "string", "description": "e.g. '2 seconds'"},
+                    "message": {
+                        "type": "string",
+                        "description": "Optional visible note for the user.",
+                    },
                 },
                 "required": ["duration"],
             },

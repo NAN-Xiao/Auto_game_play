@@ -321,23 +321,14 @@ class AsyncMAIAgent(AsyncAgentBase):
         self, messages: list[dict[str, Any]]
     ) -> AsyncGenerator[dict[str, str], None]:
         """流式调用 OpenAI，yield thinking chunks 和 raw content。"""
-        stream = await self.openai_client.chat.completions.create(
-            messages=messages,  # type: ignore[arg-type]
-            model=self.model_config.model_name,
-            max_tokens=self.model_config.max_tokens,
-            temperature=self.model_config.temperature,
-            top_p=self.model_config.top_p,
-            frequency_penalty=self.model_config.frequency_penalty,
-            extra_body=self.model_config.extra_body,
-            stream=True,
-        )
+        stream = await self._create_model_stream(messages)
 
         buffer = ""
         action_markers = ["</thinking>", "<tool_call>"]
         in_action_phase = False
 
         try:
-            async for chunk in stream:
+            async for chunk in self._iter_model_stream_chunks(stream):
                 if self._cancel_event.is_set():
                     await stream.close()
                     raise asyncio.CancelledError()

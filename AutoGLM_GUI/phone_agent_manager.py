@@ -274,6 +274,12 @@ class PhoneAgentManager:
             max_steps=max_steps,
             run_limit_type=run_limit_type,
             max_duration_seconds=max_duration_seconds,
+            observation_window_screenshot_count=(
+                effective_config.observation_window_screenshot_count
+            ),
+            observation_window_interval_seconds=(
+                effective_config.observation_window_interval_seconds
+            ),
         )
 
         # 调用 factory 方法创建 agent（避免直接依赖 phone_agent）

@@ -225,6 +225,12 @@ def get_config_endpoint() -> ConfigResponse:
         run_limit_type=effective_config.run_limit_type,
         default_max_steps=effective_config.default_max_steps,
         default_max_duration_seconds=effective_config.default_max_duration_seconds,
+        observation_window_screenshot_count=(
+            effective_config.observation_window_screenshot_count
+        ),
+        observation_window_interval_seconds=(
+            effective_config.observation_window_interval_seconds
+        ),
         layered_max_turns=effective_config.layered_max_turns,
         decision_base_url=effective_config.decision_base_url,
         decision_model_name=effective_config.decision_model_name,
@@ -270,11 +276,31 @@ def save_config_endpoint(request: ConfigSaveRequest) -> dict[str, Any]:
             if "default_max_duration_seconds" in provided_fields
             else current_config.default_max_duration_seconds
         )
+        effective_observation_window_screenshot_count = (
+            request.observation_window_screenshot_count
+            if "observation_window_screenshot_count" in provided_fields
+            else current_config.observation_window_screenshot_count
+        )
+        effective_observation_window_interval_seconds = (
+            request.observation_window_interval_seconds
+            if "observation_window_interval_seconds" in provided_fields
+            else current_config.observation_window_interval_seconds
+        )
 
         max_steps_for_save = request.default_max_steps
         max_duration_for_save = request.default_max_duration_seconds
         max_steps_set = "default_max_steps" in provided_fields
         max_duration_set = "default_max_duration_seconds" in provided_fields
+        observation_window_screenshot_count_for_save = (
+            request.observation_window_screenshot_count
+            if "observation_window_screenshot_count" in provided_fields
+            else None
+        )
+        observation_window_interval_seconds_for_save = (
+            request.observation_window_interval_seconds
+            if "observation_window_interval_seconds" in provided_fields
+            else None
+        )
 
         if effective_run_limit_type == "steps":
             if effective_max_steps is None:
@@ -303,7 +329,7 @@ def save_config_endpoint(request: ConfigSaveRequest) -> dict[str, Any]:
                 max_duration_for_save = effective_max_duration_seconds
                 max_steps_set = True
                 max_duration_set = True
-        elif effective_run_limit_type == "unlimited":
+        elif effective_run_limit_type in {"autonomous", "unlimited"}:
             if "run_limit_type" in provided_fields:
                 max_steps_for_save = None
                 max_duration_for_save = None
@@ -317,6 +343,12 @@ def save_config_endpoint(request: ConfigSaveRequest) -> dict[str, Any]:
             run_limit_type=request.run_limit_type,
             default_max_steps=max_steps_for_save,
             default_max_duration_seconds=max_duration_for_save,
+            observation_window_screenshot_count=(
+                effective_observation_window_screenshot_count
+            ),
+            observation_window_interval_seconds=(
+                effective_observation_window_interval_seconds
+            ),
             layered_max_turns=request.layered_max_turns,
         )
 
@@ -334,6 +366,12 @@ def save_config_endpoint(request: ConfigSaveRequest) -> dict[str, Any]:
             else None,
             default_max_steps=max_steps_for_save,
             default_max_duration_seconds=max_duration_for_save,
+            observation_window_screenshot_count=(
+                observation_window_screenshot_count_for_save
+            ),
+            observation_window_interval_seconds=(
+                observation_window_interval_seconds_for_save
+            ),
             layered_max_turns=request.layered_max_turns,
             decision_base_url=request.decision_base_url,
             decision_model_name=request.decision_model_name,
@@ -342,6 +380,12 @@ def save_config_endpoint(request: ConfigSaveRequest) -> dict[str, Any]:
             run_limit_type_set="run_limit_type" in provided_fields,
             default_max_steps_set=max_steps_set,
             default_max_duration_seconds_set=max_duration_set,
+            observation_window_screenshot_count_set=(
+                "observation_window_screenshot_count" in provided_fields
+            ),
+            observation_window_interval_seconds_set=(
+                "observation_window_interval_seconds" in provided_fields
+            ),
             layered_max_turns_set="layered_max_turns" in provided_fields,
         )
 

@@ -8,6 +8,7 @@ from typing import Any
 from collections.abc import Callable
 
 from AutoGLM_GUI.agents.base import AsyncAgentBase
+from AutoGLM_GUI.agents.base.async_agent_base import STRICT_FINISH_RETRY_LIMIT
 from AutoGLM_GUI.agents.protocols import AsyncAgent
 from AutoGLM_GUI.config import AgentConfig, ModelConfig
 from AutoGLM_GUI.device_protocol import DeviceProtocol
@@ -61,6 +62,7 @@ class AsyncGLMAgent(AsyncAgentBase, AsyncAgent):
         # official Open-AutoGLM layout.
         self._pending_task: str | None = None
         self._pending_reference_images: list[dict[str, str]] = []
+        self._last_observation_window: list[Any] = []
 
     def _get_default_system_prompt(self, lang: str) -> str:
         return get_system_prompt(lang)
@@ -81,14 +83,28 @@ class AsyncGLMAgent(AsyncAgentBase, AsyncAgent):
     async def _execute_step(self) -> AsyncGenerator[dict[str, Any], None]:
         """执行单步：获取截图 → 流式调用 LLM → 解析文本 → 执行动作。"""
         self._step_count += 1
+        recovery_instruction = self._consume_strict_finish_recovery_instruction()
+        reuse_last_observation = (
+            recovery_instruction is not None
+            and self._strict_finish_recovery_attempts < STRICT_FINISH_RETRY_LIMIT
+            and self._last_observation_window
+        )
+        if reuse_last_observation:
+            self._strict_finish_recovery_attempts += 1
 
         # 1. 获取当前屏幕状态
         try:
-            with trace_span(
-                "step.capture_screenshot",
-                attrs={"step": self._step_count, "agent_type": self.__class__.__name__},
-            ):
-                screenshot = await asyncio.to_thread(self.device.get_screenshot)
+            if reuse_last_observation:
+                screenshots = self._last_observation_window.copy()
+            else:
+                screenshots = []
+                async for observation_item in self._observe_observation_window():
+                    if isinstance(observation_item, list):
+                        screenshots = observation_item
+                    else:
+                        yield observation_item
+                self._last_observation_window = screenshots.copy()
+            screenshot = screenshots[-1]
             with trace_span(
                 "step.get_current_app",
                 attrs={"step": self._step_count, "agent_type": self.__class__.__name__},
@@ -115,35 +131,65 @@ class AsyncGLMAgent(AsyncAgentBase, AsyncAgent):
             "step.build_message",
             attrs={"step": self._step_count, "agent_type": self.__class__.__name__},
         ):
-            # 清除历史消息中残留的截图，保证本次请求只包含当前屏幕这一张图。
-            self._context = [
-                MessageBuilder.remove_images_from_message(message)
-                for message in self._context
-            ]
+            stateless_observation_turn = self._prepare_context_for_model_turn()
 
             screen_info = MessageBuilder.build_screen_info(current_app)
+            observation_notice = self._build_observation_window_notice(
+                screenshot_count=len(screenshots),
+                reference_image_count=len(self._pending_reference_images)
+                if self._step_count == 1
+                else 0,
+            )
             if self._step_count == 1 and self._pending_task is not None:
-                reference_notice = MessageBuilder.build_user_reference_images_notice(
-                    len(self._pending_reference_images)
+                stateless_section = (
+                    "\n\n"
+                    + self._build_stateless_observation_turn_notice(include_task=False)
+                    if stateless_observation_turn
+                    else ""
                 )
                 reference_section = (
-                    f"\n\n** User Reference Images **\n\n{reference_notice}"
-                    if reference_notice
+                    f"\n\n** Observation Context **\n\n{observation_notice}"
+                    if observation_notice
                     else ""
                 )
                 text_content = (
-                    f"{self._pending_task}{reference_section}"
+                    f"{self._pending_task}{stateless_section}{reference_section}"
                     f"\n\n** Screen Info **\n\n{screen_info}"
                 )
                 self._pending_task = None
                 images = [
-                    {"mime_type": "image/png", "data": screenshot.base64_data},
+                    {"mime_type": "image/png", "data": shot.base64_data}
+                    for shot in screenshots
+                ] + [
                     *self._pending_reference_images,
                 ]
                 self._pending_reference_images = []
             else:
-                text_content = f"** Screen Info **\n\n{screen_info}"
-                images = [{"mime_type": "image/png", "data": screenshot.base64_data}]
+                recovery_section = (
+                    f"\n\n** Strict Mode Recovery **\n\n{recovery_instruction}"
+                    if recovery_instruction
+                    else ""
+                )
+                stateless_section = (
+                    self._build_stateless_observation_turn_notice(include_task=True)
+                    + "\n\n"
+                    if stateless_observation_turn
+                    else ""
+                )
+                text_content = (
+                    f"{stateless_section}** Screen Info **\n\n{screen_info}"
+                    f"\n\n** Observation Context **\n\n{observation_notice}"
+                    f"{recovery_section}"
+                    if observation_notice
+                    else (
+                        f"{stateless_section}** Screen Info **\n\n{screen_info}"
+                        f"{recovery_section}"
+                    )
+                )
+                images = [
+                    {"mime_type": "image/png", "data": shot.base64_data}
+                    for shot in screenshots
+                ]
             self._context.append(
                 MessageBuilder.create_user_message_with_images(
                     text=text_content,
@@ -342,23 +388,14 @@ class AsyncGLMAgent(AsyncAgentBase, AsyncAgent):
         self, messages: list[dict[str, Any]]
     ) -> AsyncGenerator[dict[str, str], None]:
         """流式调用 OpenAI，yield thinking chunks。"""
-        stream = await self.openai_client.chat.completions.create(
-            messages=messages,  # type: ignore[arg-type]
-            model=self.model_config.model_name,
-            max_tokens=self.model_config.max_tokens,
-            temperature=self.model_config.temperature,
-            top_p=self.model_config.top_p,
-            frequency_penalty=self.model_config.frequency_penalty,
-            extra_body=self.model_config.extra_body,
-            stream=True,
-        )
+        stream = await self._create_model_stream(messages)
 
         buffer = ""
         action_markers = ["finish(message=", "do(action="]
         in_action_phase = False
 
         try:
-            async for chunk in stream:
+            async for chunk in self._iter_model_stream_chunks(stream):
                 if self._cancel_event.is_set():
                     await stream.close()
                     raise asyncio.CancelledError()

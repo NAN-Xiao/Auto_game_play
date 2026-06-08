@@ -120,6 +120,8 @@ class FakeConfigManager:
             run_limit_type="steps",
             default_max_steps=120,
             default_max_duration_seconds=None,
+            observation_window_screenshot_count=6,
+            observation_window_interval_seconds=2.5,
             layered_max_turns=50,
             decision_base_url="http://localhost:9999/v1",
             decision_model_name="planner-model",
@@ -358,6 +360,28 @@ def test_save_config_unlimited_clears_all_normal_limits(env: dict[str, Any]) -> 
     assert env["config_manager"].save_kwargs["default_max_duration_seconds_set"] is True
 
 
+def test_save_config_autonomous_clears_all_normal_limits(env: dict[str, Any]) -> None:
+    response = env["client"].post(
+        "/api/config",
+        json={
+            "base_url": "http://localhost:8080/v1",
+            "model_name": "autoglm-phone-9b",
+            "run_limit_type": "autonomous",
+            "default_max_steps": 100,
+            "default_max_duration_seconds": 7200,
+            "layered_max_turns": 50,
+        },
+    )
+
+    assert response.status_code == 200
+    assert env["config_manager"].save_kwargs is not None
+    assert env["config_manager"].save_kwargs["run_limit_type"] == "autonomous"
+    assert env["config_manager"].save_kwargs["default_max_steps"] is None
+    assert env["config_manager"].save_kwargs["default_max_duration_seconds"] is None
+    assert env["config_manager"].save_kwargs["default_max_steps_set"] is True
+    assert env["config_manager"].save_kwargs["default_max_duration_seconds_set"] is True
+
+
 def test_save_config_duration_requires_duration(env: dict[str, Any]) -> None:
     env["config_manager"].effective_config.default_max_duration_seconds = None
 
@@ -395,6 +419,49 @@ def test_save_config_partial_steps_update_still_allowed(env: dict[str, Any]) -> 
     assert env["config_manager"].save_kwargs["default_max_steps_set"] is True
     assert (
         env["config_manager"].save_kwargs["default_max_duration_seconds_set"] is False
+    )
+    assert (
+        env["config_manager"].save_kwargs["observation_window_screenshot_count"] is None
+    )
+    assert (
+        env["config_manager"].save_kwargs["observation_window_screenshot_count_set"]
+        is False
+    )
+    assert (
+        env["config_manager"].save_kwargs["observation_window_interval_seconds"] is None
+    )
+    assert (
+        env["config_manager"].save_kwargs["observation_window_interval_seconds_set"]
+        is False
+    )
+
+
+def test_save_config_passes_observation_window_fields(
+    env: dict[str, Any],
+) -> None:
+    response = env["client"].post(
+        "/api/config",
+        json={
+            "base_url": "http://localhost:8080/v1",
+            "model_name": "autoglm-phone-9b",
+            "observation_window_screenshot_count": 8,
+            "observation_window_interval_seconds": 1.5,
+        },
+    )
+
+    assert response.status_code == 200
+    assert env["config_manager"].save_kwargs is not None
+    assert env["config_manager"].save_kwargs["observation_window_screenshot_count"] == 8
+    assert (
+        env["config_manager"].save_kwargs["observation_window_screenshot_count_set"]
+        is True
+    )
+    assert (
+        env["config_manager"].save_kwargs["observation_window_interval_seconds"] == 1.5
+    )
+    assert (
+        env["config_manager"].save_kwargs["observation_window_interval_seconds_set"]
+        is True
     )
 
 
@@ -590,6 +657,8 @@ def test_get_config_masks_empty_api_key_and_maps_conflicts(
     assert payload["source"] == "config file (~/.config/autoglm/config.json)"
     assert payload["run_limit_type"] == "steps"
     assert payload["default_max_duration_seconds"] is None
+    assert payload["observation_window_screenshot_count"] == 6
+    assert payload["observation_window_interval_seconds"] == 2.5
     assert payload["conflicts"] == [
         {
             "field": "base_url",

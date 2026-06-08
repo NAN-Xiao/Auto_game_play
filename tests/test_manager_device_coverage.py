@@ -114,6 +114,15 @@ class TakeoverResumeAgent(FakeAgent):
         }
 
 
+class EmptyDoneMessageAgent(FakeAgent):
+    async def stream(self, text: str, *, continue_with: str | None = None):
+        self.stream_calls.append((text, continue_with))
+        yield {
+            "type": "done",
+            "data": {"message": "", "success": True, "steps": 0},
+        }
+
+
 class FakePhoneAgentManager:
     def __init__(self, agent: Any) -> None:
         self.agent = agent
@@ -539,6 +548,47 @@ def test_task_manager_classic_chat_execution_paths(
     assert fake_phone_manager.errors[-1][1] == (
         "Current agent does not support user image attachments"
     )
+    store.close()
+
+
+def test_task_manager_classic_chat_accepts_empty_success_done_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_task_tracing(monkeypatch)
+    store = TaskStore(tmp_path / "classic-empty-done.db")
+    manager = TaskManager(store)
+    monkeypatch.setattr(manager, "_ensure_worker", lambda device_id: None)
+
+    fake_phone_manager = FakePhoneAgentManager(EmptyDoneMessageAgent())
+    monkeypatch.setattr(
+        PhoneAgentManager,
+        "get_instance",
+        classmethod(lambda cls: fake_phone_manager),
+    )
+
+    session = asyncio.run(
+        manager.create_chat_session(
+            device_id="device-1", device_serial="serial-1", mode="classic"
+        )
+    )
+    queued_task = asyncio.run(
+        manager.submit_chat_task(
+            session_id=session["id"],
+            device_id="device-1",
+            device_serial="serial-1",
+            message="finish silently",
+        )
+    )
+    task = store.get_task(queued_task["id"])
+    assert task is not None
+
+    asyncio.run(manager._execute_classic_chat(task))
+
+    completed = store.get_task(task["id"])
+    assert completed is not None
+    assert completed["status"] == TaskStatus.SUCCEEDED.value
+    assert completed["final_message"] == "Task completed"
+    assert completed["stop_reason"] == "completed"
     store.close()
 
 

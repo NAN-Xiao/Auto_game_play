@@ -690,9 +690,11 @@ export interface ConfigResponse {
   agent_type?: string;
   agent_config_params?: Record<string, unknown>;
   // Agent 执行配置
-  run_limit_type: 'steps' | 'duration' | 'unlimited';
+  run_limit_type: 'autonomous' | 'steps' | 'duration' | 'unlimited';
   default_max_steps: number | null;
   default_max_duration_seconds: number | null;
+  observation_window_screenshot_count: number;
+  observation_window_interval_seconds: number;
   layered_max_turns: number;
   // 决策模型配置
   decision_base_url?: string;
@@ -708,9 +710,11 @@ export interface ConfigSaveRequest {
   agent_type?: string;
   agent_config_params?: Record<string, unknown>;
   // Agent 执行配置
-  run_limit_type?: 'steps' | 'duration' | 'unlimited';
+  run_limit_type?: 'autonomous' | 'steps' | 'duration' | 'unlimited';
   default_max_steps?: number | null;
   default_max_duration_seconds?: number | null;
+  observation_window_screenshot_count?: number;
+  observation_window_interval_seconds?: number;
   layered_max_turns?: number;
   // 决策模型配置
   decision_base_url?: string;
@@ -983,6 +987,7 @@ export interface ExperiencePlan {
   report_request: string;
   stop_conditions: string[];
   sampling_strategy: string[];
+  memory_policy: 'independent_items' | 'hybrid' | 'stateful_flow';
 }
 
 export interface ExperiencePlanResponse {

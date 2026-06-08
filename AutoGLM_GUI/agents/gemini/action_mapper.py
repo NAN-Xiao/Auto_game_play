@@ -37,6 +37,15 @@ def _require_str(args: dict[str, Any], key: str) -> str:
     return val
 
 
+def _copy_optional_message(
+    action: dict[str, Any], args: dict[str, Any]
+) -> dict[str, Any]:
+    message = args.get("message")
+    if isinstance(message, str) and message.strip():
+        action["message"] = message
+    return action
+
+
 def tool_call_to_action(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Convert a function call to an ActionHandler-compatible action dict.
 
@@ -62,55 +71,76 @@ def tool_call_to_action(tool_name: str, arguments: dict[str, Any]) -> dict[str, 
 def _build_action(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Build action dict with validated arguments."""
     if tool_name == "tap":
-        return {
-            "_metadata": "do",
-            "action": "Tap",
-            "element": [_require_int(args, "x"), _require_int(args, "y")],
-        }
+        return _copy_optional_message(
+            {
+                "_metadata": "do",
+                "action": "Tap",
+                "element": [_require_int(args, "x"), _require_int(args, "y")],
+            },
+            args,
+        )
 
     if tool_name == "double_tap":
-        return {
-            "_metadata": "do",
-            "action": "Double Tap",
-            "element": [_require_int(args, "x"), _require_int(args, "y")],
-        }
+        return _copy_optional_message(
+            {
+                "_metadata": "do",
+                "action": "Double Tap",
+                "element": [_require_int(args, "x"), _require_int(args, "y")],
+            },
+            args,
+        )
 
     if tool_name == "long_press":
-        return {
-            "_metadata": "do",
-            "action": "Long Press",
-            "element": [_require_int(args, "x"), _require_int(args, "y")],
-        }
+        return _copy_optional_message(
+            {
+                "_metadata": "do",
+                "action": "Long Press",
+                "element": [_require_int(args, "x"), _require_int(args, "y")],
+            },
+            args,
+        )
 
     if tool_name == "swipe":
-        return {
-            "_metadata": "do",
-            "action": "Swipe",
-            "start": [_require_int(args, "start_x"), _require_int(args, "start_y")],
-            "end": [_require_int(args, "end_x"), _require_int(args, "end_y")],
-        }
+        return _copy_optional_message(
+            {
+                "_metadata": "do",
+                "action": "Swipe",
+                "start": [
+                    _require_int(args, "start_x"),
+                    _require_int(args, "start_y"),
+                ],
+                "end": [_require_int(args, "end_x"), _require_int(args, "end_y")],
+            },
+            args,
+        )
 
     if tool_name == "type_text":
         return {"_metadata": "do", "action": "Type", "text": _require_str(args, "text")}
 
     if tool_name == "launch_app":
-        return {
-            "_metadata": "do",
-            "action": "Launch",
-            "app": _require_str(args, "app_name"),
-        }
+        return _copy_optional_message(
+            {
+                "_metadata": "do",
+                "action": "Launch",
+                "app": _require_str(args, "app_name"),
+            },
+            args,
+        )
 
     if tool_name == "back":
-        return {"_metadata": "do", "action": "Back"}
+        return _copy_optional_message({"_metadata": "do", "action": "Back"}, args)
 
     if tool_name == "home":
-        return {"_metadata": "do", "action": "Home"}
+        return _copy_optional_message({"_metadata": "do", "action": "Home"}, args)
 
     if tool_name == "wait":
-        return {
-            "_metadata": "do",
-            "action": "Wait",
-            "duration": args.get("duration", "1 seconds"),
-        }
+        return _copy_optional_message(
+            {
+                "_metadata": "do",
+                "action": "Wait",
+                "duration": args.get("duration", "1 seconds"),
+            },
+            args,
+        )
 
     raise InvalidToolCallError(tool_name, args, f"Unknown tool: {tool_name}")

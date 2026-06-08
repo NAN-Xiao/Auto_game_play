@@ -1,0 +1,27 @@
+schema_version: 1
+module_path: frontend/app_shell
+title: 应用外壳与全局布局
+scope:
+    - frontend/src/routes/__root.tsx
+    - frontend/src/main.tsx
+    - frontend/src/styles.css
+    - frontend/src/components/NavigationSidebar.tsx
+    - frontend/src/components/ThemeToggle.tsx
+    - frontend/src/components/Toast.tsx
+    - frontend/src/components/ConfirmDialog.tsx
+    - frontend/src/components/ResizableHandle.tsx
+    - frontend/src/components/WidthControl.tsx
+    - frontend/src/components/MarkdownContent.tsx
+    - frontend/src/lib/theme-provider.tsx
+    - frontend/src/lib/i18n.ts
+    - frontend/src/lib/i18n-context.tsx
+    - frontend/src/lib/interaction-config.ts
+    - frontend/src/lib/sse.ts
+    - frontend/src/hooks/use-mobile.ts
+    - frontend/src/hooks/useDebouncedState.ts
+    - frontend/src/hooks/useLocalStorage.ts
+    - frontend/src/hooks/usePageVisibility.ts
+    - frontend/src/hooks/useFooterVersionInfo.ts
+source_files: []
+depends_on: []
+related_to: []

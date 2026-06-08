@@ -183,6 +183,8 @@ def serialize_model_error(
         details.update(_api_status_error_details(exc, _response_body_text(exc)))
     elif isinstance(exc, APITimeoutError):
         details["kind"] = "model_timeout"
+    elif isinstance(exc, TimeoutError):
+        details["kind"] = "model_timeout"
     elif isinstance(exc, APIConnectionError):
         details["kind"] = "model_connection_error"
 
@@ -212,6 +214,8 @@ async def serialize_model_error_async(
             _api_status_error_details(exc, await _response_body_text_async(exc))
         )
     elif isinstance(exc, APITimeoutError):
+        details["kind"] = "model_timeout"
+    elif isinstance(exc, TimeoutError):
         details["kind"] = "model_timeout"
     elif isinstance(exc, APIConnectionError):
         details["kind"] = "model_connection_error"

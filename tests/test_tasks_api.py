@@ -347,7 +347,10 @@ def test_task_session_submit_accepts_experience_payload(client: TestClient) -> N
     )
 
     assert submit_resp.status_code == 200
-    assert client.fake_task_manager.submitted_experience["plan"]["report_request"] == "输出任务难度分析"  # type: ignore[attr-defined]
+    assert (
+        client.fake_task_manager.submitted_experience["plan"]["report_request"]
+        == "输出任务难度分析"
+    )  # type: ignore[attr-defined]
 
 
 def test_task_session_supports_layered_mode(client: TestClient) -> None:

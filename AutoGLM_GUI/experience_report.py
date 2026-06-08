@@ -42,6 +42,7 @@ MAX_CONTEXT_CHARS = 50000
 MAX_SEGMENT_INPUT_CHARS = 16000
 MAX_REPORT_SCREENSHOTS = 6
 MAX_SEGMENT_SCREENSHOT_REFS = 2
+MAX_OBSERVED_ITEM_SUMMARIES = 80
 
 
 @dataclass(frozen=True)
@@ -180,6 +181,59 @@ def _format_event_line(
         return "; ".join(part for part in parts if part)
 
     return None
+
+
+def _iter_text_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        texts: list[str] = []
+        for nested in value.values():
+            texts.extend(_iter_text_values(nested))
+        return texts
+    if isinstance(value, list):
+        texts = []
+        for item in value:
+            texts.extend(_iter_text_values(item))
+        return texts
+    return []
+
+
+def _extract_object_summary_text(text: str) -> str | None:
+    marker = "OBJECT_SUMMARY:"
+    index = text.find(marker)
+    if index < 0:
+        return None
+    summary = text[index + len(marker) :].strip()
+    return summary or None
+
+
+def _extract_observed_item_summaries(
+    events: list[TaskEventRecord],
+) -> list[tuple[int, str]]:
+    summaries: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    step_count = 0
+    for fallback_step, event in enumerate(events, start=1):
+        if event["event_type"] != "step":
+            continue
+        step_count += 1
+        payload = dict(event.get("payload") or {})
+        step = _step_index(payload, step_count or fallback_step)
+        text_sources = _iter_text_values(payload.get("message"))
+        text_sources.extend(_iter_text_values(payload.get("action")))
+        for text in text_sources:
+            summary = _extract_object_summary_text(text)
+            if summary is None:
+                continue
+            normalized = " ".join(summary.split())
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            summaries.append((step, _truncate_text(summary, 900)))
+            if len(summaries) >= MAX_OBSERVED_ITEM_SUMMARIES:
+                return summaries
+    return summaries
 
 
 def _select_report_screenshots(
@@ -614,6 +668,7 @@ def build_experience_report_context(
             int(payload.get("end_step") or 0),
         ),
     )
+    observed_item_summaries = _extract_observed_item_summaries(events)
     lines: list[str] = [
         "# Previous App Experience",
         f"task_id: {source_task['id']}",
@@ -628,6 +683,19 @@ def build_experience_report_context(
     ]
 
     step_events = counted_step_events or int(source_task.get("step_count") or 0)
+    if observed_item_summaries:
+        lines.extend(
+            [
+                "# Observed Item Summaries",
+                (
+                    "These are explicit user-facing conclusions emitted before "
+                    "switching to the next observed item or stage."
+                ),
+            ]
+        )
+        for index, (step, summary) in enumerate(observed_item_summaries, start=1):
+            lines.append(f"- item {index} (step {step}): {summary}")
+
     if segment_summaries:
         lines.extend(
             [
@@ -729,10 +797,14 @@ async def generate_experience_report(
         {
             "role": "system",
             "content": (
-                "You generate product experience reports for any Android app. "
-                "Use only the provided trajectory context. Do not claim details "
-                "that are not supported by the context. Follow the user's requested "
-                "format, focus areas, language, and level of detail exactly."
+                "You answer follow-up questions or generate reports from a retained "
+                "Android app trajectory. Use only the provided trajectory context. "
+                "Do not claim details that are not supported by the context. If the "
+                "user asks what was just watched, read, played, tested, or operated, "
+                "answer directly from the retained observed-item summaries and "
+                "trajectory evidence with clear conclusions, then add concise content "
+                "details. Follow the user's requested format, focus areas, language, "
+                "and level of detail exactly."
             ),
         },
     ]

@@ -1,0 +1,564 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: main
+exported_at: "2026-06-08T04:48:08Z"
+modules:
+    "":
+        dir_name: AutoGLM-GUI 全栈智能体交互平台
+        title: AutoGLM-GUI 全栈智能体交互平台
+        scope:
+            - .dockerignore
+            - .gitattributes
+            - .gitignore
+            - AGENTS.md
+            - AI_USAGE.md
+            - Dockerfile
+            - README.md
+            - README_EN.md
+            - codecov.yml
+            - docker-compose.yml
+            - main.py
+            - pyproject.toml
+            - pyrightconfig.json
+            - pytest.ini
+            - renovate.json
+            - uv.lock
+            - .claude/
+            - .claude\commands\lint.md
+            - AutoGLM_GUI\__init__.py
+            - AutoGLM_GUI\__main__.py
+            - AutoGLM_GUI\actions\__init__.py
+            - AutoGLM_GUI\actions\handler.py
+            - AutoGLM_GUI\actions\types.py
+            - AutoGLM_GUI\adb\__init__.py
+            - AutoGLM_GUI\adb\apps.py
+            - AutoGLM_GUI\adb\connection.py
+            - AutoGLM_GUI\adb\device.py
+            - AutoGLM_GUI\adb\input.py
+            - AutoGLM_GUI\adb\screenshot.py
+            - AutoGLM_GUI\adb\timing.py
+            - AutoGLM_GUI\adb_manager.py
+            - AutoGLM_GUI\adb_plus\__init__.py
+            - AutoGLM_GUI\adb_plus\device.py
+            - AutoGLM_GUI\adb_plus\display.py
+            - AutoGLM_GUI\adb_plus\ip.py
+            - AutoGLM_GUI\adb_plus\keyboard_installer.py
+            - AutoGLM_GUI\adb_plus\mdns.py
+            - AutoGLM_GUI\adb_plus\pair.py
+            - AutoGLM_GUI\adb_plus\qr_pair.py
+            - AutoGLM_GUI\adb_plus\screenshot.py
+            - AutoGLM_GUI\adb_plus\serial.py
+            - AutoGLM_GUI\adb_plus\touch.py
+            - AutoGLM_GUI\adb_plus\version.py
+            - AutoGLM_GUI\adb_terminal_repl.py
+            - AutoGLM_GUI\adb_terminal_service.py
+            - AutoGLM_GUI\agents\__init__.py
+            - AutoGLM_GUI\agents\base\__init__.py
+            - AutoGLM_GUI\agents\base\async_agent_base.py
+            - AutoGLM_GUI\agents\droidrun\__init__.py
+            - AutoGLM_GUI\agents\droidrun\async_agent.py
+            - AutoGLM_GUI\agents\events.py
+            - AutoGLM_GUI\agents\factory.py
+            - AutoGLM_GUI\agents\gemini\__init__.py
+            - AutoGLM_GUI\agents\gemini\action_mapper.py
+            - AutoGLM_GUI\agents\gemini\async_agent.py
+            - AutoGLM_GUI\agents\gemini\models.py
+            - AutoGLM_GUI\agents\gemini\prompts.py
+            - AutoGLM_GUI\agents\gemini\tools.py
+            - AutoGLM_GUI\agents\glm\__init__.py
+            - AutoGLM_GUI\agents\glm\async_agent.py
+            - AutoGLM_GUI\agents\glm\parser.py
+            - AutoGLM_GUI\agents\glm\prompts_en.py
+            - AutoGLM_GUI\agents\glm\prompts_zh.py
+            - AutoGLM_GUI\agents\mai\__init__.py
+            - AutoGLM_GUI\agents\mai\async_agent.py
+            - AutoGLM_GUI\agents\mai\parser.py
+            - AutoGLM_GUI\agents\mai\prompts.py
+            - AutoGLM_GUI\agents\mai\traj_memory.py
+            - AutoGLM_GUI\agents\midscene\__init__.py
+            - AutoGLM_GUI\agents\midscene\async_agent.py
+            - AutoGLM_GUI\agents\midscene\log_parser.py
+            - AutoGLM_GUI\agents\protocols.py
+            - AutoGLM_GUI\agents\qwen\__init__.py
+            - AutoGLM_GUI\agents\qwen\async_agent.py
+            - AutoGLM_GUI\agents\qwen\parser.py
+            - AutoGLM_GUI\agents\qwen\prompts_en.py
+            - AutoGLM_GUI\agents\qwen\prompts_zh.py
+            - AutoGLM_GUI\api\__init__.py
+            - AutoGLM_GUI\api\agents.py
+            - AutoGLM_GUI\api\control.py
+            - AutoGLM_GUI\api\devices.py
+            - AutoGLM_GUI\api\experience.py
+            - AutoGLM_GUI\api\health.py
+            - AutoGLM_GUI\api\history.py
+            - AutoGLM_GUI\api\layered_agent.py
+            - AutoGLM_GUI\api\mcp.py
+            - AutoGLM_GUI\api\media.py
+            - AutoGLM_GUI\api\metrics.py
+            - AutoGLM_GUI\api\scheduled_tasks.py
+            - AutoGLM_GUI\api\tasks.py
+            - AutoGLM_GUI\api\terminal.py
+            - AutoGLM_GUI\api\version.py
+            - AutoGLM_GUI\api\workflows.py
+            - AutoGLM_GUI\config.py
+            - AutoGLM_GUI\config_manager.py
+            - AutoGLM_GUI\device_group_manager.py
+            - AutoGLM_GUI\device_manager.py
+            - AutoGLM_GUI\device_metadata_manager.py
+            - AutoGLM_GUI\device_protocol.py
+            - AutoGLM_GUI\devices\__init__.py
+            - AutoGLM_GUI\devices\adb_device.py
+            - AutoGLM_GUI\devices\mock_device.py
+            - AutoGLM_GUI\devices\remote_device.py
+            - AutoGLM_GUI\exceptions.py
+            - AutoGLM_GUI\experience_planner.py
+            - AutoGLM_GUI\experience_report.py
+            - AutoGLM_GUI\history_manager.py
+            - AutoGLM_GUI\i18n.py
+            - AutoGLM_GUI\layered_agent_service.py
+            - AutoGLM_GUI\logger.py
+            - AutoGLM_GUI\metrics.py
+            - AutoGLM_GUI\model\__init__.py
+            - AutoGLM_GUI\model\error_details.py
+            - AutoGLM_GUI\model\message_builder.py
+            - AutoGLM_GUI\models\__init__.py
+            - AutoGLM_GUI\models\device_group.py
+            - AutoGLM_GUI\models\history.py
+            - AutoGLM_GUI\models\scheduled_task.py
+            - AutoGLM_GUI\parsers\__init__.py
+            - AutoGLM_GUI\phone_agent_manager.py
+            - AutoGLM_GUI\platform_utils.py
+            - AutoGLM_GUI\prompt_config.py
+            - AutoGLM_GUI\prompts.py
+            - AutoGLM_GUI\prompts\__init__.py
+            - AutoGLM_GUI\resources\apks\ADBKeyBoard.LICENSE.txt
+            - AutoGLM_GUI\resources\apks\ADBKeyBoard.README.txt
+            - AutoGLM_GUI\resources\apks\ADBKeyboard.apk
+            - AutoGLM_GUI\resources\scrcpy-server-v3.3.3
+            - AutoGLM_GUI\scheduler_manager.py
+            - AutoGLM_GUI\schemas.py
+            - AutoGLM_GUI\scrcpy_protocol.py
+            - AutoGLM_GUI\scrcpy_stream.py
+            - AutoGLM_GUI\server.py
+            - AutoGLM_GUI\socketio_server.py
+            - AutoGLM_GUI\task_manager.py
+            - AutoGLM_GUI\task_store.py
+            - AutoGLM_GUI\trace.py
+            - AutoGLM_GUI\trace_export.py
+            - AutoGLM_GUI\types.py
+            - AutoGLM_GUI\version.py
+            - AutoGLM_GUI\workflow_manager.py
+            - CLAUDE.md
+            - CONTRIBUTING.md
+            - LICENSE
+            - docs\.gitignore
+            - docs\README.md
+            - docs\USER_REQUIREMENTS_SUMMARY.md
+            - docs\device-management-refactor-todo.md
+            - docs\docs\configuration.md
+            - docs\docs\deployment.md
+            - docs\docs\deployment\desktop.md
+            - docs\docs\deployment\docker.md
+            - docs\docs\deployment\server.md
+            - docs\docs\development-harness.md
+            - docs\docs\development.md
+            - docs\docs\faq.md
+            - docs\docs\features\chat-control.md
+            - docs\docs\features\direct-operation.md
+            - docs\docs\features\history.md
+            - docs\docs\features\interrupt.md
+            - docs\docs\features\layered-agent.md
+            - docs\docs\features\logs.md
+            - docs\docs\features\mcp.md
+            - docs\docs\features\multi-device.md
+            - docs\docs\features\realtime-preview.md
+            - docs\docs\features\scheduler.md
+            - docs\docs\features\web-terminal.md
+            - docs\docs\features\workflow.md
+            - docs\docs\getting-started\device-connection.md
+            - docs\docs\getting-started\first-run.md
+            - docs\docs\getting-started\install.md
+            - docs\docs\getting-started\model-config.md
+            - docs\docs\installation.md
+            - docs\docs\intro.md
+            - docs\docs\layered_agent_analysis.md
+            - docs\docs\license.md
+            - docs\docs\quick-start.md
+            - docs\docs\release-notes-v1.5.md
+            - docs\docs\troubleshooting\adb.md
+            - docs\docs\troubleshooting\common-issues.md
+            - docs\docs\troubleshooting\model-api.md
+            - docs\docs\upgrade.md
+            - docs\docs\user-guide\ai-modes.md
+            - docs\docs\user-guide\interface.md
+            - docs\docs\user-guide\manual-control.md
+            - docs\docs\user-guide\multi-device.md
+            - docs\docs\user-guide\workflow.md
+            - docs\docusaurus.config.ts
+            - docs\package.json
+            - docs\sidebars.ts
+            - docs\src\components\HomepageFeatures\index.tsx
+            - docs\src\components\HomepageFeatures\styles.module.css
+            - docs\src\css\custom.css
+            - docs\src\pages\index.module.css
+            - docs\src\pages\index.tsx
+            - docs\src\pages\markdown-page.md
+            - docs\static\.nojekyll
+            - docs\static\img\docusaurus-social-card.jpg
+            - docs\static\img\docusaurus.png
+            - docs\static\img\favicon.ico
+            - docs\static\img\logo.svg
+            - docs\static\img\undraw_docusaurus_mountain.svg
+            - docs\static\img\undraw_docusaurus_react.svg
+            - docs\static\img\undraw_docusaurus_tree.svg
+            - docs\trace-implementation-plan.md
+            - docs\tsconfig.json
+            - electron\.npmrc
+            - electron\afterPack.js
+            - electron\electron-builder.yml
+            - electron\icon.icns
+            - electron\icon.ico
+            - electron\icon.png
+            - electron\main.js
+            - electron\package-lock.json
+            - electron\package.json
+            - electron\preload.js
+            - electron\verify-deps.js
+            - frontend\.gitignore
+            - frontend\.prettierignore
+            - frontend\README.md
+            - frontend\components.json
+            - frontend\e2e\device-state-routing.spec.ts
+            - frontend\e2e\globalSetup.ts
+            - frontend\e2e\globalTeardown.ts
+            - frontend\e2e\processTree.ts
+            - frontend\e2e\scroll.spec.ts
+            - frontend\e2e\trace-events.spec.ts
+            - frontend\eslint.config.js
+            - frontend\index.html
+            - frontend\package-lock.json
+            - frontend\package.json
+            - frontend\playwright.config.ts
+            - frontend\postcss.config.mjs
+            - frontend\prettier.config.js
+            - frontend\public\favicon.ico
+            - frontend\public\logo-192.png
+            - frontend\public\logo-512.png
+            - frontend\src\api.ts
+            - frontend\src\assets\logo.png
+            - frontend\src\components\ChatKitPanel.tsx
+            - frontend\src\components\ConfirmDialog.tsx
+            - frontend\src\components\DeviceCard.tsx
+            - frontend\src\components\DeviceMonitor.tsx
+            - frontend\src\components\DevicePanel.tsx
+            - frontend\src\components\DeviceSidebar.tsx
+            - frontend\src\components\GroupManageDialog.tsx
+            - frontend\src\components\GroupedDeviceList.tsx
+            - frontend\src\components\HistoryItemCard.tsx
+            - frontend\src\components\MarkdownContent.tsx
+            - frontend\src\components\NavigationSidebar.tsx
+            - frontend\src\components\ResizableHandle.tsx
+            - frontend\src\components\ScrcpyPlayer.tsx
+            - frontend\src\components\ThemeToggle.tsx
+            - frontend\src\components\Toast.tsx
+            - frontend\src\components\WidthControl.tsx
+            - frontend\src\components\ui\alert-dialog.tsx
+            - frontend\src\components\ui\badge.tsx
+            - frontend\src\components\ui\button.tsx
+            - frontend\src\components\ui\card.tsx
+            - frontend\src\components\ui\collapsible.tsx
+            - frontend\src\components\ui\dialog.tsx
+            - frontend\src\components\ui\dropdown-menu.tsx
+            - frontend\src\components\ui\image-preview.tsx
+            - frontend\src\components\ui\input.tsx
+            - frontend\src\components\ui\label.tsx
+            - frontend\src\components\ui\popover.tsx
+            - frontend\src\components\ui\progress.tsx
+            - frontend\src\components\ui\scroll-area.tsx
+            - frontend\src\components\ui\select.tsx
+            - frontend\src\components\ui\separator.tsx
+            - frontend\src\components\ui\sheet.tsx
+            - frontend\src\components\ui\sidebar.tsx
+            - frontend\src\components\ui\skeleton.tsx
+            - frontend\src\components\ui\switch.tsx
+            - frontend\src\components\ui\tabs.tsx
+            - frontend\src\components\ui\textarea.tsx
+            - frontend\src\components\ui\tooltip.tsx
+            - frontend\src\hooks\use-mobile.ts
+            - frontend\src\hooks\useDebouncedState.ts
+            - frontend\src\hooks\useDeviceGroups.ts
+            - frontend\src\hooks\useFooterVersionInfo.ts
+            - frontend\src\hooks\useLocalStorage.ts
+            - frontend\src\hooks\usePageVisibility.ts
+            - frontend\src\hooks\useScreenshotPolling.ts
+            - frontend\src\hooks\useTaskSessionConversation.ts
+            - frontend\src\lib\device-context.tsx
+            - frontend\src\lib\i18n-context.tsx
+            - frontend\src\lib\i18n.ts
+            - frontend\src\lib\interaction-config.ts
+            - frontend\src\lib\locales\en.ts
+            - frontend\src\lib\locales\zh.ts
+            - frontend\src\lib\sse.ts
+            - frontend\src\lib\theme-provider.tsx
+            - frontend\src\lib\utils.ts
+            - frontend\src\lib\webcodecs-utils.ts
+            - frontend\src\main.tsx
+            - frontend\src\routeTree.gen.ts
+            - frontend\src\routes\__root.tsx
+            - frontend\src\routes\about.tsx
+            - frontend\src\routes\chat.tsx
+            - frontend\src\routes\history.tsx
+            - frontend\src\routes\index.tsx
+            - frontend\src\routes\logs.tsx
+            - frontend\src\routes\scheduled-tasks.tsx
+            - frontend\src\routes\terminal.tsx
+            - frontend\src\routes\workflows.tsx
+            - frontend\src\styles.css
+            - frontend\src\vite-env.d.ts
+            - frontend\tsconfig.json
+            - frontend\vite.config.js
+            - scripts\autoglm.spec
+            - scripts\build.py
+            - scripts\build_electron.py
+            - scripts\convert_icon.py
+            - scripts\create_test_screenshots.py
+            - scripts\download_adb.py
+            - scripts\export_trace_otlp.py
+            - scripts\lint.py
+            - scripts\pyi_rth_fakeredis.py
+            - scripts\pyi_rth_utf8.py
+            - scripts\release.py
+            - scripts\run_harness.py
+            - scripts\start_e2e_services.py
+            - scripts\start_mock_device.py
+            - scripts\start_mock_llm.py
+            - tests\integration\__init__.py
+            - tests\integration\conftest.py
+            - tests\integration\device_agent\__init__.py
+            - tests\integration\device_agent\mock_agent_server.py
+            - tests\integration\device_agent\mock_llm_client.py
+            - tests\integration\device_agent\mock_llm_server.py
+            - tests\integration\device_agent\test_client.py
+            - tests\integration\device_agent\test_e2e_with_adapter.py
+            - tests\integration\device_agent\test_remote_device.py
+            - tests\integration\fixtures\scenarios\meituan_message\golden.normalized.json
+            - tests\integration\fixtures\scenarios\meituan_message\scenario.yaml
+            - tests\integration\fixtures\scenarios\meituan_message\state_home.jpg
+            - tests\integration\fixtures\scenarios\meituan_message\state_message.jpg
+            - tests\integration\fixtures\scenarios\wechat_multi_step\scenario.yaml
+            - tests\integration\fixtures\scenarios\wechat_multi_step\state_10_finished.png
+            - tests\integration\fixtures\scenarios\wechat_multi_step\state_1_home.png
+            - tests\integration\fixtures\scenarios\wechat_multi_step\state_2_main.png
+            - tests\integration\fixtures\scenarios\wechat_multi_step\state_3_search.png
+            - tests\integration\fixtures\scenarios\wechat_multi_step\state_4_search_result.png
+            - tests\integration\fixtures\scenarios\wechat_multi_step\state_5_chat_detail.png
+            - tests\integration\fixtures\scenarios\wechat_multi_step\state_6_input.png
+            - tests\integration\fixtures\scenarios\wechat_multi_step\state_7_typing.png
+            - tests\integration\fixtures\scenarios\wechat_multi_step\state_8_sent.png
+            - tests\integration\fixtures\scenarios\wechat_multi_step\state_9_back.png
+            - tests\integration\pytest.ini
+            - tests\integration\schema.py
+            - tests\integration\state_machine.py
+            - tests\integration\test_agent_integration.py
+            - tests\integration\test_docker_e2e.py
+            - tests\integration\test_local_e2e.py
+            - tests\integration\test_runner.py
+            - tests\integration\test_task_system_e2e.py
+            - tests\integration\test_trace_replay_e2e.py
+            - tests\mock_screenshots\chat.png
+            - tests\mock_screenshots\home.png
+            - tests\mock_screenshots\settings.png
+            - tests\test_adb_input.py
+            - tests\test_adb_keyboard_check.py
+            - tests\test_adb_manager.py
+            - tests\test_adb_pair_helpers.py
+            - tests\test_adb_terminal_repl.py
+            - tests\test_agent_adapter_coverage.py
+            - tests\test_agents_api.py
+            - tests\test_agents_chat_config_api.py
+            - tests\test_cancel_device_release.py
+            - tests\test_control_api.py
+            - tests\test_coverage_phase1.py
+            - tests\test_device_manager_keyboard_init.py
+            - tests\test_device_metadata_manager.py
+            - tests\test_device_name_api.py
+            - tests\test_devices_api.py
+            - tests\test_experience_api.py
+            - tests\test_experience_report.py
+            - tests\test_gemini_agent.py
+            - tests\test_gemini_e2e.py
+            - tests\test_glm_async_agent.py
+            - tests\test_glm_module_layout.py
+            - tests\test_glm_module_paths.py
+            - tests\test_hardware_boundary_coverage.py
+            - tests\test_health_api.py
+            - tests\test_history_api.py
+            - tests\test_interaction_actions.py
+            - tests\test_layered_agent_session_api.py
+            - tests\test_layered_max_turns_config.py
+            - tests\test_manager_device_coverage.py
+            - tests\test_mcp_api.py
+            - tests\test_mcp_task_tools.py
+            - tests\test_media_api.py
+            - tests\test_metrics.py
+            - tests\test_model_connection_check_api.py
+            - tests\test_model_error_details.py
+            - tests\test_phone_agent_manager.py
+            - tests\test_qr_pairing.py
+            - tests\test_qwen_agent.py
+            - tests\test_scheduled_tasks_api.py
+            - tests\test_scheduler_manager.py
+            - tests\test_scrcpy_stream_edges.py
+            - tests\test_serial_extraction.py
+            - tests\test_service_entry_coverage.py
+            - tests\test_socketio_server.py
+            - tests\test_static_assets_mime.py
+            - tests\test_task_api_phase1.py
+            - tests\test_task_manager.py
+            - tests\test_task_store.py
+            - tests\test_tasks_api.py
+            - tests\test_terminal_api.py
+            - tests\test_terminal_service.py
+            - tests\test_trace.py
+            - tests\test_trace_observability_integration.py
+            - tests\test_version_api.py
+            - tests\test_workflows_api.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    autoglm_gui:
+        dir_name: AutoGLM 手机智能体 Web 交互平台
+        title: AutoGLM 手机智能体 Web 交互平台
+        scope:
+            - AutoGLM_GUI/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: electron
+            - path: tests
+    docs:
+        dir_name: AutoGLM-GUI 项目文档站点
+        title: AutoGLM-GUI 项目文档站点
+        scope:
+            - docs/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    electron:
+        dir_name: AutoGLM GUI 桌面应用壳层
+        title: AutoGLM GUI 桌面应用壳层
+        scope:
+            - electron/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: autoglm_gui
+            - path: scripts
+    frontend:
+        dir_name: 前端应用架构与设备交互平台
+        title: 前端应用架构与设备交互平台
+        scope:
+            - frontend/
+        source_files: []
+        children:
+            - frontend/chat_feature
+            - frontend/app_shell
+            - frontend/scrcpy_player
+            - frontend/device_control
+        depends_on: []
+        related_to: []
+    frontend/app_shell:
+        dir_name: 应用外壳与全局布局
+        title: 应用外壳与全局布局
+        scope:
+            - frontend/src/routes/__root.tsx
+            - frontend/src/main.tsx
+            - frontend/src/styles.css
+            - frontend/src/components/NavigationSidebar.tsx
+            - frontend/src/components/ThemeToggle.tsx
+            - frontend/src/components/Toast.tsx
+            - frontend/src/components/ConfirmDialog.tsx
+            - frontend/src/components/ResizableHandle.tsx
+            - frontend/src/components/WidthControl.tsx
+            - frontend/src/components/MarkdownContent.tsx
+            - frontend/src/lib/theme-provider.tsx
+            - frontend/src/lib/i18n.ts
+            - frontend/src/lib/i18n-context.tsx
+            - frontend/src/lib/interaction-config.ts
+            - frontend/src/lib/sse.ts
+            - frontend/src/hooks/use-mobile.ts
+            - frontend/src/hooks/useDebouncedState.ts
+            - frontend/src/hooks/useLocalStorage.ts
+            - frontend/src/hooks/usePageVisibility.ts
+            - frontend/src/hooks/useFooterVersionInfo.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend/chat_feature:
+        dir_name: 设备交互与实时监控系统
+        title: 设备交互与实时监控系统
+        scope:
+            - frontend/src/routes/chat.tsx
+            - frontend/src/components/ChatKitPanel.tsx
+            - frontend/src/hooks/useTaskSessionConversation.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: frontend/device_control
+            - path: frontend/scrcpy_player
+    frontend/device_control:
+        dir_name: 设备控制与交互面板
+        title: 设备控制与交互面板
+        scope:
+            - frontend/src/routes/index.tsx
+            - frontend/src/components/DeviceCard.tsx
+            - frontend/src/components/DevicePanel.tsx
+            - frontend/src/components/DeviceSidebar.tsx
+            - frontend/src/components/GroupedDeviceList.tsx
+            - frontend/src/components/GroupManageDialog.tsx
+            - frontend/src/hooks/useDeviceGroups.ts
+            - frontend/src/lib/device-context.tsx
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: frontend/chat_feature
+    frontend/scrcpy_player:
+        dir_name: Scrcpy 视频流播放与交互控制
+        title: Scrcpy 视频流播放与交互控制
+        scope:
+            - frontend/src/components/ScrcpyPlayer.tsx
+            - frontend/src/lib/webcodecs-utils.ts
+            - frontend/src/hooks/useScreenshotPolling.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: frontend/chat_feature
+    scripts:
+        dir_name: 构建、发布与集成测试自动化
+        title: 构建、发布与集成测试自动化
+        scope:
+            - scripts/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: electron
+    tests:
+        dir_name: 自动化测试与集成验证框架
+        title: 自动化测试与集成验证框架
+        scope:
+            - tests/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: autoglm_gui

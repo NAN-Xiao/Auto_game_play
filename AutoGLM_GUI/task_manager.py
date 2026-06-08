@@ -8,6 +8,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
+from AutoGLM_GUI.config import MemoryPolicy
 from AutoGLM_GUI.logger import logger
 from AutoGLM_GUI.metrics import record_trace_latency_metrics
 from AutoGLM_GUI.task_store import (
@@ -25,6 +26,167 @@ TaskExecutor = Callable[[TaskRecord], Awaitable[None]]
 TaskImageAttachment = dict[str, Any]
 TaskExperiencePayload = dict[str, Any]
 EXPERIENCE_SUMMARY_MAX_CONCURRENCY = 1
+ITERATIVE_OBSERVATION_HINTS = (
+    "观看",
+    "浏览",
+    "阅读",
+    "观察",
+    "停留",
+    "等待",
+    "体验",
+    "查看",
+    "播放",
+    "看",
+    "足够时长",
+    "一段时间",
+)
+ITERATIVE_ITEM_HINTS = (
+    "每个",
+    "每条",
+    "每一",
+    "逐个",
+    "逐条",
+    "依次",
+    "一个个",
+    "多个",
+    "多条",
+)
+ITERATIVE_SUMMARY_HINTS = (
+    "提炼",
+    "总结",
+    "归纳",
+    "分析",
+    "判断",
+    "识别",
+    "记录",
+    "获取",
+    "收集",
+    "提取",
+    "内容",
+    "信息",
+    "文案",
+    "字幕",
+    "文字",
+    "要点",
+    "结论",
+)
+ITERATIVE_SWITCH_HINTS = (
+    "下一个",
+    "下一条",
+    "下一页",
+    "切换",
+    "滑动",
+    "翻页",
+    "继续",
+    "换下一个",
+)
+OBSERVATION_WINDOW_RULE_HINTS = (
+    "间隔截屏",
+    "间隔截图",
+    "连续截图",
+    "连续画面",
+    "多帧",
+    "多图",
+    "多次截图",
+    "观察窗口",
+    "采样",
+)
+DYNAMIC_OBSERVATION_SUBJECT_HINTS = (
+    "app",
+    "应用",
+    "视频",
+    "抖音",
+    "短视频",
+    "游戏",
+    "直播",
+    "动画",
+    "播放",
+    "战斗",
+    "关卡",
+    "动态",
+    "连续画面",
+    "画面变化",
+    "页面变化",
+)
+STATEFUL_FLOW_HINTS = (
+    "游戏",
+    "游玩",
+    "玩法",
+    "关卡",
+    "战斗",
+    "任务",
+    "剧情",
+    "新手",
+    "引导",
+    "登录",
+    "注册",
+    "表单",
+    "流程",
+    "聊天",
+    "通讯",
+    "消息",
+    "对话",
+    "客服",
+    "背包",
+    "资源",
+    "血量",
+    "等级",
+    "进度",
+)
+INDEPENDENT_ITEM_HINTS = (
+    "视频",
+    "短视频",
+    "抖音",
+    "商品",
+    "帖子",
+    "新闻",
+    "文章",
+    "列表",
+    "信息流",
+)
+
+
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
+def _looks_like_iterative_observation_task(text: str) -> bool:
+    compact_text = "".join(text.split())
+    has_sampling_rule = (
+        "至少3次" in compact_text or "至少三次" in compact_text or "多次" in text
+    ) and _contains_any(text, ("对象", "截图", "观察", "采样", "证据"))
+    has_iteration = _contains_any(text, ITERATIVE_ITEM_HINTS)
+    has_observation = _contains_any(text, ITERATIVE_OBSERVATION_HINTS)
+    has_summary = _contains_any(text, ITERATIVE_SUMMARY_HINTS)
+    has_switch = _contains_any(text, ITERATIVE_SWITCH_HINTS)
+    return has_sampling_rule or (
+        (has_iteration or has_switch) and has_observation and has_summary
+    )
+
+
+def _looks_like_observation_window_task(text: str) -> bool:
+    has_explicit_window_rule = _contains_any(text, OBSERVATION_WINDOW_RULE_HINTS)
+    has_dynamic_subject = _contains_any(text, DYNAMIC_OBSERVATION_SUBJECT_HINTS)
+    has_observation = _contains_any(text, ITERATIVE_OBSERVATION_HINTS)
+    return (
+        has_explicit_window_rule
+        or _looks_like_iterative_observation_task(text)
+        or (has_dynamic_subject and has_observation)
+    )
+
+
+def _infer_memory_policy(text: str) -> MemoryPolicy:
+    if _contains_any(text, STATEFUL_FLOW_HINTS):
+        return (
+            "hybrid"
+            if _looks_like_iterative_observation_task(text)
+            else "stateful_flow"
+        )
+    if _looks_like_iterative_observation_task(text) and _contains_any(
+        text, INDEPENDENT_ITEM_HINTS
+    ):
+        return "independent_items"
+    return "hybrid"
 
 
 class TaskManager:
@@ -36,8 +198,10 @@ class TaskManager:
         self._abort_handlers: dict[
             str, Callable[[], Any] | Callable[[], Awaitable[Any]]
         ] = {}
+        self._running_executor_tasks: dict[str, asyncio.Task[None]] = {}
         self._completion_events: dict[str, asyncio.Event] = {}
         self._cancel_requested: set[str] = set()
+        self._executor_cancel_requested: set[str] = set()
         self._executors: dict[str, TaskExecutor] = {}
         self._experience_summary_tasks: dict[str, asyncio.Task[None]] = {}
         self._experience_summary_rerun_requested: set[str] = set()
@@ -72,6 +236,8 @@ class TaskManager:
         self._shutdown = True
         workers = list(self._workers.values())
         self._workers.clear()
+        self._running_executor_tasks.clear()
+        self._executor_cancel_requested.clear()
         for worker in workers:
             worker.cancel()
         if workers:
@@ -161,7 +327,9 @@ class TaskManager:
             raise ValueError(f"Unsupported session mode: {session_mode}")
 
         source_task: TaskRecord | None = None
-        if experience is None and self._looks_like_report_request(message.strip().lower()):
+        if experience is None and self._looks_like_report_request(
+            message.strip().lower()
+        ):
             source_task = await asyncio.to_thread(
                 self.store.get_latest_reportable_session_task,
                 session_id,
@@ -208,6 +376,73 @@ class TaskManager:
 
     @staticmethod
     def _looks_like_report_request(message: str) -> bool:
+        continuation_keywords = (
+            "继续",
+            "接着",
+            "再跑",
+            "再执行",
+            "重新",
+            "重跑",
+            "换成",
+            "改成",
+            "调整策略",
+            "改变策略",
+            "按这个策略",
+            "下次",
+            "接下来",
+            "继续看",
+            "继续体验",
+            "继续执行",
+            "continue",
+            "resume",
+            "rerun",
+            "restart",
+            "change strategy",
+            "adjust strategy",
+        )
+        past_context_keywords = (
+            "刚才",
+            "刚刚",
+            "上次",
+            "之前",
+            "前面",
+            "上一轮",
+            "刚看",
+            "刚做",
+            "刚跑",
+            "刚体验",
+            "刚操作",
+            "previous",
+            "earlier",
+            "just watched",
+            "just did",
+        )
+        recall_keywords = (
+            "看了什么",
+            "做了什么",
+            "浏览了什么",
+            "体验了什么",
+            "讲了什么",
+            "什么视频",
+            "什么内容",
+            "介绍",
+            "结论",
+            "详细讲",
+            "展开",
+            "列一下",
+            "是哪几个",
+            "有哪些",
+            "第一个",
+            "第二个",
+            "第三个",
+            "上一个",
+            "最后一个",
+            "what did",
+            "what have",
+            "what was",
+            "which",
+            "details",
+        )
         positive_keywords = (
             "报告",
             "汇报",
@@ -232,15 +467,30 @@ class TaskManager:
             "format",
             "analysis",
         )
+        if any(keyword in message for keyword in continuation_keywords):
+            return False
         operation_keywords = (
             "点击",
             "打开",
             "进入",
             "返回",
+            "观看",
+            "看视频",
+            "浏览",
+            "体验",
+            "测试",
+            "做一个",
+            "运行",
+            "执行",
+            "启动",
+            "试玩",
+            "玩一下",
             "滑动",
             "输入",
             "搜索",
             "切换",
+            "切下一个",
+            "下一个",
             "关闭",
             "安装",
             "卸载",
@@ -250,36 +500,25 @@ class TaskManager:
             "open",
             "swipe",
             "scroll",
+            "watch",
+            "browse",
+            "test",
+            "run",
+            "play",
+            "next",
             "type",
             "input",
             "search",
         )
-        generation_keywords = (
-            "输出",
-            "生成",
-            "总结",
-            "汇总",
-            "整理",
-            "格式",
-            "按以下",
-            "按照",
-            "复盘",
-            "generate",
-            "summarize",
-            "summary",
-            "format",
-            "analysis",
-            "evaluate",
-            "evaluation",
-            "review",
-        )
+        has_past_context = any(keyword in message for keyword in past_context_keywords)
+        has_recall = any(keyword in message for keyword in recall_keywords)
         has_positive = any(keyword in message for keyword in positive_keywords)
+        if has_past_context and (has_recall or has_positive):
+            return True
         if not has_positive:
             return False
         has_operation = any(keyword in message for keyword in operation_keywords)
-        if has_operation and not any(
-            keyword in message for keyword in generation_keywords
-        ):
+        if has_operation and not has_past_context:
             return False
         return True
 
@@ -318,9 +557,158 @@ class TaskManager:
         return None
 
     @staticmethod
+    def _build_experience_semantic_context(
+        original_goal: str,
+        experience: TaskExperiencePayload,
+    ) -> str:
+        plan = experience.get("plan")
+        if not isinstance(plan, dict):
+            return original_goal
+
+        def _list_values(values: Any) -> list[str]:
+            if not isinstance(values, list):
+                return []
+            return [str(value) for value in values if str(value).strip()]
+
+        return "\n".join(
+            [
+                original_goal,
+                str(plan.get("execution_goal") or ""),
+                "\n".join(_list_values(plan.get("observation_targets"))),
+                "\n".join(_list_values(plan.get("analysis_lenses"))),
+                "\n".join(_list_values(plan.get("stop_conditions"))),
+                "\n".join(_list_values(plan.get("sampling_strategy"))),
+            ]
+        )
+
+    @staticmethod
+    def _experience_requires_observation_window(
+        original_goal: str,
+        experience: TaskExperiencePayload,
+    ) -> bool:
+        semantic_context = TaskManager._build_experience_semantic_context(
+            original_goal,
+            experience,
+        )
+        return _looks_like_observation_window_task(semantic_context)
+
+    @staticmethod
+    def _build_observation_window_description(
+        *,
+        observation_window_screenshot_count: int | None = None,
+        observation_window_interval_seconds: float | None = None,
+    ) -> str:
+        if (
+            observation_window_screenshot_count is not None
+            and observation_window_interval_seconds is not None
+        ):
+            return (
+                f"按当前系统观察窗口配置完成 {observation_window_screenshot_count} "
+                f"张截图、间隔 {observation_window_interval_seconds:g} 秒的多帧采样"
+            )
+        return "按当前系统观察窗口配置完成多帧间隔截图"
+
+    @staticmethod
+    def _build_iterative_observation_execution_rules(
+        observation_window_description: str,
+    ) -> list[str]:
+        return [
+            "- 逐项对象门槛只在你根据用户语义判断存在“逐个对象/每个对象/依次对象 + 停留观察 + 提炼记录 + 切换下一个”结构时启用。",
+            "- 启用逐项对象门槛后，必须按循环执行：当前对象观察窗口采样 -> 当前对象综合小结 -> 带 OBJECT_SUMMARY 的切换动作 -> 新对象重新采样。",
+            f"- 启用逐项对象门槛后，每个对象都要先完成观察窗口采样；观察窗口会{observation_window_description}。",
+            "- 启用逐项对象门槛后，每一步思考里都要显式维护对象边界：当前对象是什么、当前观察窗口是否已足以小结、是否已经满足切换条件。",
+            "- 启用逐项对象门槛后，未完成当前对象的观察窗口综合分析前，禁止使用 Swipe、Tap、翻页、滑动、点击“下一个”或任何会切换到下一个对象的动作。",
+            "- 启用逐项对象门槛后，先形成当前对象的可见小结；小结重点必须服从用户原始目标和对象类型，不要把任务固定成视频总结，也不要预设 UI、数据、来源、互动指标一定是主体或补充。只有完成当前对象小结后，才允许切换到下一个对象。",
+            '- 启用逐项对象门槛后，小结不能只写在思考中。准备切换下一个对象时，本次 do(...) 动作必须携带 message="OBJECT_SUMMARY: ..."，把当前对象小结写入 message；如果使用 Tap、Swipe、Back、列表选择或点击屏幕中部等方式切换对象，同样必须带这个 message。',
+            "- OBJECT_SUMMARY 内容必须是给用户看的结论，不要写“我将要总结/我需要记录”这类过程话；根据用户语义自动选择结构：视频任务偏内容/文案/画面/观点，App 体验偏流程/交互/状态变化/问题，游戏任务偏目标/操作反馈/关卡机制/体验卡点，商品/帖子/页面偏主体内容/关键信息/判断依据。",
+            "- UI、控件、状态、布局、文案、账号/来源、时间、价格、互动数据等是否是核心，必须由用户目标决定；App、游戏、通讯、流程、体验任务中，UI 与交互状态通常就是核心证据。只有当这些信息和用户目标无关时，才把它们降为背景或忽略。",
+            "- 启用逐项对象门槛后，如果观察窗口内画面完全静止，也要把“无明显变化”记录为证据；这不等于可以跳过当前对象小结。",
+            "- 启用逐项对象门槛后，切换后必须把新对象当作新的观察对象重新计数，不能把上一个对象的截图/证据混入当前对象。",
+            "- 启用逐项对象门槛后，如果用户没有明确指定“只处理一个/只看当前/完成 1 个就停”，禁止在只完成 1 个对象后 finish；遇到“每个/下一个/继续/同样总结”时，默认这是开放式循环，不是单对象任务。",
+            "- 启用逐项对象门槛后，未指定明确数量上限时，至少完成 2 个不同对象的可见小结后才允许考虑是否达到停止条件；如果用户语义是持续处理后续对象，应继续切换和总结，直到用户停止、系统限制、或连续多次无法进入新对象。",
+            "- 启用逐项对象门槛后，finish 只能在满足明确停止条件时使用；finish message 必须列出已完成的每个对象小结和停止原因，禁止用“已切换到下一个，用户可以继续观看/浏览”这类话术结束任务。",
+        ]
+
+    @staticmethod
+    def _build_memory_policy_execution_rules(memory_policy: str | None) -> list[str]:
+        if memory_policy == "independent_items":
+            return [
+                "- 记忆方式：独立对象模式。每轮只基于原始委托、当前观察窗口和当前界面判断当前对象；历史截图、thinking、小结和动作只用于落库和最终报告，不要依赖上一对象内容来判断当前对象。"
+            ]
+        if memory_policy == "stateful_flow":
+            return [
+                "- 记忆方式：连续状态模式。每轮都要维护必要运行态记忆：当前目标、已完成节点、当前状态、上一步操作结果、失败/重试原因、需要避免重复的动作；截图和详细轨迹仍以任务事件为准用于最终报告。"
+            ]
+        return [
+            "- 记忆方式：混合模式。当前对象内结论主要看本轮观察窗口；但要保留必要运行态记忆，例如已处理数量、切换是否成功、当前目标、阶段进度和需要避免重复的动作。"
+        ]
+
+    @staticmethod
+    def _build_chat_execution_input(
+        original_goal: str,
+        *,
+        observation_window_screenshot_count: int | None = None,
+        observation_window_interval_seconds: float | None = None,
+    ) -> str:
+        requires_iterative_sampling = _looks_like_iterative_observation_task(
+            original_goal
+        )
+        requires_observation_window = _looks_like_observation_window_task(original_goal)
+        if not (requires_iterative_sampling or requires_observation_window):
+            return original_goal
+
+        observation_window_description = (
+            TaskManager._build_observation_window_description(
+                observation_window_screenshot_count=observation_window_screenshot_count,
+                observation_window_interval_seconds=observation_window_interval_seconds,
+            )
+        )
+        sections = [
+            "你现在在执行一次 Android 自然语言任务。",
+            "请根据用户原始委托的语义自行拆解执行结构，不要把持续观察任务当成一次性问答。",
+            "",
+            f"原始委托：{original_goal}",
+            "",
+            "语义拆解协议：",
+            "- 先从原始委托中判断观察对象、执行阶段、证据要求、切换条件和最终产物；观察对象可以是视频、商品、帖子、页面、关卡、任务、流程阶段或任意用户语义对象。",
+            "- 如果用户要求逐个/每个/依次处理某类对象，并要求停留、观看、浏览、观察、提炼、总结、记录或分析，就必须按“当前对象内取证 -> 当前对象结论 -> 切换下一个对象”的循环执行。",
+            "- 如果用户没有要求逐项对象，就按关键路径或阶段取证，不要机械套用逐项循环。",
+            "",
+            "执行要求：",
+            *TaskManager._build_memory_policy_execution_rules("hybrid"),
+            *(
+                [
+                    "- 后端语义预判：当前任务包含动态/连续画面观察语义；本次会先按配置采集同一对象的多帧截图，再让模型综合判断下一步。"
+                ]
+                if requires_observation_window
+                else []
+            ),
+            *(
+                [
+                    "- 后端语义预判：当前任务包含逐项对象观察语义，请启用下面的逐项对象边界和切换门槛。"
+                ]
+                if requires_iterative_sampling
+                else []
+            ),
+            f"- 如果当前任务需要动态/连续画面观察，先综合同一轮观察窗口内的多张图；观察窗口会{observation_window_description}。",
+            *(
+                TaskManager._build_iterative_observation_execution_rules(
+                    observation_window_description
+                )
+                if requires_iterative_sampling
+                else []
+            ),
+            "- 完成用户明确要求的范围后可以结束任务；如果这是开放式逐项循环任务，不要主动提前结束。",
+        ]
+        return "\n".join(sections)
+
+    @staticmethod
     def _build_experience_execution_input(
         original_goal: str,
         experience: TaskExperiencePayload,
+        *,
+        observation_window_screenshot_count: int | None = None,
+        observation_window_interval_seconds: float | None = None,
     ) -> str:
         plan = experience.get("plan")
         if not isinstance(plan, dict):
@@ -331,9 +719,29 @@ class TaskManager:
                 return []
             return [f"- {str(value)}" for value in values if str(value).strip()]
 
+        sampling_strategy = _list_lines(plan.get("sampling_strategy"))
+        semantic_context = TaskManager._build_experience_semantic_context(
+            original_goal,
+            experience,
+        )
+        requires_iterative_sampling = _looks_like_iterative_observation_task(
+            semantic_context
+        )
+        requires_observation_window = _looks_like_observation_window_task(
+            semantic_context
+        )
+        memory_policy = str(plan.get("memory_policy") or "hybrid")
+        observation_window_description = (
+            TaskManager._build_observation_window_description(
+                observation_window_screenshot_count=observation_window_screenshot_count,
+                observation_window_interval_seconds=observation_window_interval_seconds,
+            )
+        )
+
         sections = [
             "你现在在执行一次 Android 应用/游戏体验任务。",
             "请围绕下面已经确认的体验委托去探索、观察、取证，并在关键节点形成稳定结论。",
+            "你需要根据用户自然语言语义自行拆解执行结构，而不是套固定任务类型。",
             "",
             f"原始委托：{original_goal}",
             f"体验目标：{str(plan.get('execution_goal') or original_goal)}",
@@ -354,14 +762,50 @@ class TaskManager:
             *(_list_lines(plan.get("stop_conditions")) or ["- 覆盖关键路径后停止"]),
             "",
             "取证策略：",
-            *(_list_lines(plan.get("sampling_strategy")) or ["- 保留关键截图与证据"]),
+            *(sampling_strategy or ["- 保留关键截图与证据"]),
+            "",
+            "记忆策略：",
+            *TaskManager._build_memory_policy_execution_rules(memory_policy),
+            "",
+            "语义拆解协议：",
+            "- 先从原始委托中判断观察对象、执行阶段、证据要求、切换条件和最终产物；观察对象可以是视频、商品、帖子、页面、关卡、任务、流程阶段或任意用户语义对象。",
+            "- 如果用户要求逐个/每个/依次处理某类对象，并要求停留、观看、浏览、观察、提炼、总结、记录或分析，就必须按“当前对象内取证 -> 当前对象结论 -> 切换下一个对象”的循环执行。",
+            "- 如果用户没有要求逐项对象，就按关键路径或阶段取证，不要机械套用逐项循环。",
             "",
             "执行要求：",
             "- 优先覆盖和委托目标直接相关的关键路径，不要盲目扩散。",
             "- 遇到关键文案、数值、付费点、任务节点时要重点观察。",
-            "- 完成关键覆盖后可以结束任务，后续会基于你的轨迹自动生成报告。",
+            *(
+                [
+                    "- 后端语义预判：当前任务包含动态/连续画面观察语义；本次会先按配置采集同一对象的多帧截图，再让模型综合判断下一步。"
+                ]
+                if requires_observation_window
+                else []
+            ),
+            *(
+                [
+                    "- 后端语义预判：当前任务包含逐项对象观察语义，请启用下面的逐项对象边界和切换门槛。"
+                ]
+                if requires_iterative_sampling
+                else []
+            ),
+            f"- 如果当前任务需要动态/连续画面观察，先综合同一轮观察窗口内的多张图；观察窗口会{observation_window_description}。",
+            *(
+                TaskManager._build_iterative_observation_execution_rules(
+                    observation_window_description
+                )
+                if requires_iterative_sampling
+                else []
+            ),
+            *(
+                [
+                    "- 开放式逐项循环任务不要主动提前结束；后续会在用户停止、系统限制或明确无法继续时基于轨迹生成报告。"
+                ]
+                if requires_iterative_sampling
+                else ["- 完成关键覆盖后可以结束任务，后续会基于你的轨迹自动生成报告。"]
+            ),
         ]
-        return "\n".join(section for section in sections if section is not None)
+        return "\n".join(sections)
 
     async def enqueue_scheduled_task(
         self,
@@ -422,11 +866,16 @@ class TaskManager:
 
         if status == TaskStatus.RUNNING.value:
             self._cancel_requested.add(task_id)
+            await self._append_cancel_requested_event(task_id)
             handler = self._abort_handlers.get(task_id)
             if handler is not None:
                 result = handler()
                 if inspect.isawaitable(result):
                     await result
+            executor_task = self._running_executor_tasks.get(task_id)
+            if executor_task is not None and not executor_task.done():
+                self._executor_cancel_requested.add(task_id)
+                executor_task.cancel()
             return await asyncio.to_thread(self.store.get_task, task_id)
 
         return task
@@ -564,6 +1013,20 @@ class TaskManager:
             )
         return event_record
 
+    async def _append_cancel_requested_event(self, task_id: str) -> None:
+        existing_events = await asyncio.to_thread(self.store.list_task_events, task_id)
+        if any(event["event_type"] == "cancelled" for event in existing_events):
+            return
+        await self._append_task_event(
+            task_id=task_id,
+            event_type="cancelled",
+            payload={
+                "message": "Task cancelled by user",
+                "stop_reason": "user_stopped",
+            },
+            role="assistant",
+        )
+
     async def _finalize_traced_task(
         self,
         *,
@@ -601,6 +1064,9 @@ class TaskManager:
             trace_module.clear_trace_data(trace_id)
 
     async def _device_worker(self, device_id: str) -> None:
+        async def run_executor(executor: TaskExecutor, task: TaskRecord) -> None:
+            await executor(task)
+
         try:
             while not self._shutdown:
                 task = await asyncio.to_thread(
@@ -618,9 +1084,33 @@ class TaskManager:
                     continue
 
                 try:
-                    await executor(task)
+                    task_id = str(task["id"])
+                    executor_task = asyncio.create_task(
+                        run_executor(executor, task),
+                        name=f"TaskExecutor-{task_id}",
+                    )
+                    self._running_executor_tasks[task_id] = executor_task
+                    await executor_task
                 except asyncio.CancelledError:
-                    if task["id"] not in self._cancel_requested:
+                    task_id = str(task["id"])
+                    if (
+                        task_id in self._cancel_requested
+                        or task_id in self._executor_cancel_requested
+                    ):
+                        current = await asyncio.to_thread(self.store.get_task, task_id)
+                        if (
+                            current is not None
+                            and current["status"] not in TERMINAL_TASK_STATUSES
+                        ):
+                            await self._finalize_task(
+                                task_id=task_id,
+                                status=TaskStatus.CANCELLED.value,
+                                final_message="Task cancelled by user",
+                                stop_reason="user_stopped",
+                                step_count=int(current.get("step_count", 0)),
+                            )
+                        continue
+                    else:
                         await self._interrupt_task(
                             task,
                             "Task interrupted because the service shut down",
@@ -629,6 +1119,9 @@ class TaskManager:
                 except Exception as exc:  # pragma: no cover - safety net
                     logger.exception(f"Task {task['id']} crashed unexpectedly")
                     await self._fail_task(task, str(exc))
+                finally:
+                    self._running_executor_tasks.pop(str(task["id"]), None)
+                    self._executor_cancel_requested.discard(str(task["id"]))
         finally:
             self._workers.pop(device_id, None)
 
@@ -652,7 +1145,9 @@ class TaskManager:
         final_message = ""
         stop_reason = "error"
         step_count = 0
+        terminal_event_received = False
         abort_registered = False
+        agent: Any | None = None
         experience_payload: TaskExperiencePayload | None = None
 
         try:
@@ -731,45 +1226,94 @@ class TaskManager:
                         sig = inspect.signature(agent.stream)
                         if "continue_with" in sig.parameters:
                             stream_kwargs["continue_with"] = task["input_text"]
-                    prompt_input = (
-                        self._build_experience_execution_input(
+                    agent_config = getattr(agent, "agent_config", None)
+                    observation_window_screenshot_count = getattr(
+                        agent_config,
+                        "observation_window_screenshot_count",
+                        None,
+                    )
+                    observation_window_interval_seconds = getattr(
+                        agent_config,
+                        "observation_window_interval_seconds",
+                        None,
+                    )
+                    original_memory_policy = getattr(
+                        agent_config,
+                        "memory_policy",
+                        None,
+                    )
+                    if experience_payload is not None:
+                        plan = experience_payload.get("plan")
+                        if isinstance(plan, dict) and agent_config is not None:
+                            memory_policy = str(plan.get("memory_policy") or "hybrid")
+                            if memory_policy in {
+                                "independent_items",
+                                "hybrid",
+                                "stateful_flow",
+                            }:
+                                setattr(agent_config, "memory_policy", memory_policy)
+                        prompt_input = self._build_experience_execution_input(
                             str(task["input_text"]),
                             experience_payload,
+                            observation_window_screenshot_count=observation_window_screenshot_count,
+                            observation_window_interval_seconds=observation_window_interval_seconds,
                         )
-                        if experience_payload is not None
-                        else str(task["input_text"])
-                    )
-                    async for event in agent.stream(
-                        prompt_input,
-                        **stream_kwargs,
-                    ):
-                        event_type = event["type"]
-                        event_data = dict(event.get("data", {}))
-                        previous_step_count = step_count
-
-                        if event_type == "step":
-                            step_count = max(step_count, int(event_data.get("step", 0)))
-                            timings = trace_module.get_step_timing_summary(
-                                step_count,
-                                trace_id=trace_id,
+                    else:
+                        if agent_config is not None:
+                            setattr(
+                                agent_config,
+                                "memory_policy",
+                                _infer_memory_policy(str(task["input_text"])),
                             )
-                            if timings is not None:
-                                event_data = {**event_data, "timings": timings}
-
-                        await self._append_task_event(
-                            task_id=task_id,
-                            event_type=event_type,
-                            payload=event_data,
-                            role="assistant",
-                            trace_id=trace_id,
-                            replay_source="classic_chat",
-                            task=task,
+                        prompt_input = self._build_chat_execution_input(
+                            str(task["input_text"]),
+                            observation_window_screenshot_count=observation_window_screenshot_count,
+                            observation_window_interval_seconds=observation_window_interval_seconds,
                         )
-                        if event_type == "step":
-                            self._schedule_experience_summary_for_progress(
+                    try:
+                        async for event in agent.stream(
+                            prompt_input,
+                            **stream_kwargs,
+                        ):
+                            event_type = event["type"]
+                            event_data = dict(event.get("data", {}))
+                            previous_step_count = step_count
+
+                            if event_type == "step":
+                                step_count = max(
+                                    step_count, int(event_data.get("step", 0))
+                                )
+                                timings = trace_module.get_step_timing_summary(
+                                    step_count,
+                                    trace_id=trace_id,
+                                )
+                                if timings is not None:
+                                    event_data = {**event_data, "timings": timings}
+
+                            await self._append_task_event(
+                                task_id=task_id,
+                                event_type=event_type,
+                                payload=event_data,
+                                role="assistant",
+                                trace_id=trace_id,
+                                replay_source="classic_chat",
                                 task=task,
-                                previous_step_count=previous_step_count,
-                                current_step_count=step_count,
+                            )
+                            if event_type == "step":
+                                self._schedule_experience_summary_for_progress(
+                                    task=task,
+                                    previous_step_count=previous_step_count,
+                                    current_step_count=step_count,
+                                )
+                    finally:
+                        if (
+                            agent_config is not None
+                            and original_memory_policy is not None
+                        ):
+                            setattr(
+                                agent_config,
+                                "memory_policy",
+                                original_memory_policy,
                             )
 
                     if event_type == "takeover":
@@ -778,34 +1322,40 @@ class TaskManager:
                         stop_reason = "takeover"
                         step_count = int(event_data.get("steps", step_count))
                         self._takeover_sessions[session_id] = True
+                        terminal_event_received = True
                     elif event_type == "done":
-                        final_message = str(event_data.get("message", ""))
+                        done_success = bool(event_data.get("success", False))
+                        final_message = str(
+                            event_data.get("message")
+                            or ("Task completed" if done_success else "Task failed")
+                        )
                         final_status = (
                             TaskStatus.SUCCEEDED.value
-                            if event_data.get("success", False)
+                            if done_success
                             else TaskStatus.FAILED.value
                         )
                         stop_reason = str(
                             event_data.get(
                                 "stop_reason",
-                                "completed"
-                                if event_data.get("success", False)
-                                else "error",
+                                "completed" if done_success else "error",
                             )
                         )
                         step_count = int(event_data.get("steps", step_count))
+                        terminal_event_received = True
                     elif event_type == "error":
                         final_message = str(event_data.get("message", "Task failed"))
                         final_status = TaskStatus.FAILED.value
                         stop_reason = str(event_data.get("stop_reason", "error"))
+                        terminal_event_received = True
                     elif event_type == "cancelled":
                         final_message = str(
                             event_data.get("message", "Task cancelled by user")
                         )
                         final_status = TaskStatus.CANCELLED.value
                         stop_reason = str(event_data.get("stop_reason", "user_stopped"))
+                        terminal_event_received = True
 
-            if not final_message:
+            if not final_message and not terminal_event_received:
                 final_message = "Task finished without a final response"
                 final_status = TaskStatus.FAILED.value
                 stop_reason = "error"
@@ -900,7 +1450,9 @@ class TaskManager:
             plan = experience_payload.get("plan")
             if isinstance(plan, dict):
                 report_request = str(plan.get("report_request") or "").strip()
-            report_request = report_request or "输出一份包含结论、依据和风险的体验分析报告"
+            report_request = (
+                report_request or "输出一份包含结论、依据和风险的体验分析报告"
+            )
             await self._append_task_event(
                 task_id=task_id,
                 event_type="experience_report_context",
@@ -973,6 +1525,7 @@ class TaskManager:
         stop_reason = "error"
         step_count = 0
         run = None
+        terminal_event_received = False
 
         try:
             with trace_module.trace_context(trace_id):
@@ -1014,24 +1567,25 @@ class TaskManager:
                             current_step_count=step_count,
                         )
                     elif event_type == "done":
-                        final_message = str(event_payload.get("content", ""))
+                        done_success = bool(event_payload.get("success", False))
+                        final_message = str(event_payload.get("content") or "")
                         final_status = (
                             TaskStatus.SUCCEEDED.value
-                            if event_payload.get("success", False)
+                            if done_success
                             else TaskStatus.FAILED.value
                         )
                         stop_reason = str(
                             event_payload.get(
                                 "stop_reason",
-                                "completed"
-                                if event_payload.get("success", False)
-                                else "error",
+                                "completed" if done_success else "error",
                             )
                         )
+                        terminal_event_received = True
                     elif event_type == "error":
                         final_message = str(event_payload.get("message", "Task failed"))
                         final_status = TaskStatus.FAILED.value
                         stop_reason = str(event_payload.get("stop_reason", "error"))
+                        terminal_event_received = True
                     elif event_type == "cancelled":
                         final_message = str(
                             event_payload.get("message", "Task cancelled by user")
@@ -1040,6 +1594,7 @@ class TaskManager:
                         stop_reason = str(
                             event_payload.get("stop_reason", "user_stopped")
                         )
+                        terminal_event_received = True
 
                 if task_id in self._cancel_requested:
                     final_message = "Task cancelled by user"
@@ -1049,7 +1604,14 @@ class TaskManager:
             if not final_message and run:
                 final_message = run.final_output
 
-            if not final_message:
+            if not final_message and terminal_event_received:
+                final_message = (
+                    "Task completed"
+                    if final_status == TaskStatus.SUCCEEDED.value
+                    else "Task failed"
+                )
+
+            if not final_message and not terminal_event_received:
                 final_message = "Task finished without a final response"
                 final_status = TaskStatus.FAILED.value
                 stop_reason = "error"
@@ -1413,6 +1975,7 @@ class TaskManager:
         final_message = ""
         stop_reason = "error"
         step_count = 0
+        terminal_event_received = False
         abort_registered = False
 
         try:
@@ -1467,6 +2030,16 @@ class TaskManager:
                                 replay_source="scheduled",
                                 task=task,
                             )
+                        elif event_type == "observation":
+                            await self._append_task_event(
+                                task_id=task_id,
+                                event_type="observation",
+                                payload=event_data,
+                                role="assistant",
+                                trace_id=trace_id,
+                                replay_source="scheduled",
+                                task=task,
+                            )
                         elif event_type == "step":
                             step_count = max(
                                 step_count,
@@ -1488,29 +2061,31 @@ class TaskManager:
                                 task=task,
                             )
                         elif event_type == "done":
+                            done_success = bool(event_data.get("success", False))
                             final_message = str(
-                                event_data.get("message", "Task completed")
+                                event_data.get("message")
+                                or ("Task completed" if done_success else "Task failed")
                             )
                             final_status = (
                                 TaskStatus.SUCCEEDED.value
-                                if event_data.get("success", False)
+                                if done_success
                                 else TaskStatus.FAILED.value
                             )
                             stop_reason = str(
                                 event_data.get(
                                     "stop_reason",
-                                    "completed"
-                                    if event_data.get("success", False)
-                                    else "error",
+                                    "completed" if done_success else "error",
                                 )
                             )
                             step_count = int(event_data.get("steps", step_count))
+                            terminal_event_received = True
                         elif event_type == "error":
                             final_message = str(
                                 event_data.get("message", "Task failed")
                             )
                             final_status = TaskStatus.FAILED.value
                             stop_reason = str(event_data.get("stop_reason", "error"))
+                            terminal_event_received = True
                             await self._append_task_event(
                                 task_id=task_id,
                                 event_type="error",
@@ -1531,8 +2106,9 @@ class TaskManager:
                             stop_reason = str(
                                 event_data.get("stop_reason", "user_stopped")
                             )
+                            terminal_event_received = True
 
-                if not final_message:
+                if not final_message and not terminal_event_received:
                     final_message = "Task finished without a final response"
                     final_status = TaskStatus.FAILED.value
                     stop_reason = "error"

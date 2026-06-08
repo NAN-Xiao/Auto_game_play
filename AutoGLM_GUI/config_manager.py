@@ -29,6 +29,12 @@ from AutoGLM_GUI.logger import logger
 
 LAYERED_MAX_TURNS_DEFAULT = 50
 LAYERED_MAX_TURNS_MIN = 1
+OBSERVATION_WINDOW_SCREENSHOT_COUNT_DEFAULT = 5
+OBSERVATION_WINDOW_SCREENSHOT_COUNT_MIN = 1
+OBSERVATION_WINDOW_SCREENSHOT_COUNT_MAX = 20
+OBSERVATION_WINDOW_INTERVAL_SECONDS_DEFAULT = 3.0
+OBSERVATION_WINDOW_INTERVAL_SECONDS_MIN = 0.0
+OBSERVATION_WINDOW_INTERVAL_SECONDS_MAX = 60.0
 
 
 # ==================== 配置源枚举 ====================
@@ -63,6 +69,8 @@ class ConfigFileData(TypedDict, total=False):
     default_max_steps: int | None
     default_max_duration_seconds: int | None
     layered_max_turns: int | None
+    observation_window_screenshot_count: int
+    observation_window_interval_seconds: float
     decision_base_url: str
     decision_model_name: str
     decision_api_key: str
@@ -80,11 +88,17 @@ class ConfigModel(BaseModel):
     agent_config_params: dict[str, Any] | None = None  # Agent-specific configuration
 
     # Agent 执行配置
-    run_limit_type: RunLimitType = "steps"
+    run_limit_type: RunLimitType = "autonomous"
     default_max_steps: int | None = 100  # None 表示不限制
     default_max_duration_seconds: int | None = None  # None 表示不限制
 
     layered_max_turns: int | None = LAYERED_MAX_TURNS_DEFAULT
+    observation_window_screenshot_count: int = (
+        OBSERVATION_WINDOW_SCREENSHOT_COUNT_DEFAULT
+    )
+    observation_window_interval_seconds: float = (
+        OBSERVATION_WINDOW_INTERVAL_SECONDS_DEFAULT
+    )
 
     # 决策模型配置（用于分层代理）
     decision_base_url: str | None = None
@@ -104,9 +118,9 @@ class ConfigModel(BaseModel):
     @field_validator("run_limit_type")
     @classmethod
     def validate_run_limit_type(cls, v: str) -> RunLimitType:
-        if v not in {"steps", "duration", "unlimited"}:
+        if v not in {"autonomous", "steps", "duration", "unlimited"}:
             raise ValueError(
-                "run_limit_type must be one of: steps, duration, unlimited"
+                "run_limit_type must be one of: autonomous, steps, duration, unlimited"
             )
         return cast(RunLimitType, v)
 
@@ -164,6 +178,36 @@ class ConfigModel(BaseModel):
             raise ValueError(f"layered_max_turns must be >= {LAYERED_MAX_TURNS_MIN}")
         return v
 
+    @field_validator("observation_window_screenshot_count")
+    @classmethod
+    def validate_observation_window_screenshot_count(cls, v: int) -> int:
+        if not (
+            OBSERVATION_WINDOW_SCREENSHOT_COUNT_MIN
+            <= v
+            <= OBSERVATION_WINDOW_SCREENSHOT_COUNT_MAX
+        ):
+            raise ValueError(
+                "observation_window_screenshot_count must be between "
+                f"{OBSERVATION_WINDOW_SCREENSHOT_COUNT_MIN} and "
+                f"{OBSERVATION_WINDOW_SCREENSHOT_COUNT_MAX}"
+            )
+        return v
+
+    @field_validator("observation_window_interval_seconds")
+    @classmethod
+    def validate_observation_window_interval_seconds(cls, v: float) -> float:
+        if not (
+            OBSERVATION_WINDOW_INTERVAL_SECONDS_MIN
+            <= v
+            <= OBSERVATION_WINDOW_INTERVAL_SECONDS_MAX
+        ):
+            raise ValueError(
+                "observation_window_interval_seconds must be between "
+                f"{OBSERVATION_WINDOW_INTERVAL_SECONDS_MIN:g} and "
+                f"{OBSERVATION_WINDOW_INTERVAL_SECONDS_MAX:g}"
+            )
+        return v
+
 
 # ==================== 配置层数据类 ====================
 
@@ -183,6 +227,8 @@ class ConfigLayer:
     default_max_steps: int | None = None
     default_max_duration_seconds: int | None = None
     layered_max_turns: int | None = None
+    observation_window_screenshot_count: int | None = None
+    observation_window_interval_seconds: float | None = None
     # 决策模型配置
     decision_base_url: str | None = None
     decision_model_name: str | None = None
@@ -208,6 +254,8 @@ class ConfigLayer:
             "default_max_steps": self.default_max_steps,
             "default_max_duration_seconds": self.default_max_duration_seconds,
             "layered_max_turns": self.layered_max_turns,
+            "observation_window_screenshot_count": self.observation_window_screenshot_count,
+            "observation_window_interval_seconds": self.observation_window_interval_seconds,
             "decision_base_url": self.decision_base_url,
             "decision_model_name": self.decision_model_name,
             "decision_api_key": self.decision_api_key,
@@ -274,10 +322,16 @@ class UnifiedConfigManager:
             api_key="EMPTY",
             agent_type="glm-async",
             agent_config_params=None,
-            run_limit_type="steps",
+            run_limit_type="autonomous",
             default_max_steps=100,
             default_max_duration_seconds=None,
             layered_max_turns=LAYERED_MAX_TURNS_DEFAULT,
+            observation_window_screenshot_count=(
+                OBSERVATION_WINDOW_SCREENSHOT_COUNT_DEFAULT
+            ),
+            observation_window_interval_seconds=(
+                OBSERVATION_WINDOW_INTERVAL_SECONDS_DEFAULT
+            ),
             decision_base_url=None,
             decision_model_name=None,
             decision_api_key=None,
@@ -347,6 +401,8 @@ class UnifiedConfigManager:
         - AUTOGLM_DEFAULT_MAX_STEPS
         - AUTOGLM_DEFAULT_MAX_DURATION_SECONDS
         - AUTOGLM_LAYERED_MAX_TURNS
+        - AUTOGLM_OBSERVATION_WINDOW_SCREENSHOT_COUNT
+        - AUTOGLM_OBSERVATION_WINDOW_INTERVAL_SECONDS
         """
         base_url = os.getenv("AUTOGLM_BASE_URL")
         model_name = os.getenv("AUTOGLM_MODEL_NAME")
@@ -361,11 +417,11 @@ class UnifiedConfigManager:
         run_limit_type: RunLimitType | None = None
         if run_limit_type_str:
             normalized = run_limit_type_str.strip().lower()
-            if normalized in {"steps", "duration", "unlimited"}:
+            if normalized in {"autonomous", "steps", "duration", "unlimited"}:
                 run_limit_type = cast(RunLimitType, normalized)
             else:
                 logger.warning(
-                    "AUTOGLM_RUN_LIMIT_TYPE must be one of: steps, duration, unlimited"
+                    "AUTOGLM_RUN_LIMIT_TYPE must be one of: autonomous, steps, duration, unlimited"
                 )
 
         default_max_steps_str = os.getenv("AUTOGLM_DEFAULT_MAX_STEPS")
@@ -396,6 +452,34 @@ class UnifiedConfigManager:
             except ValueError:
                 logger.warning("AUTOGLM_LAYERED_MAX_TURNS must be an integer")
 
+        observation_window_screenshot_count_str = os.getenv(
+            "AUTOGLM_OBSERVATION_WINDOW_SCREENSHOT_COUNT"
+        )
+        observation_window_screenshot_count = None
+        if observation_window_screenshot_count_str:
+            try:
+                observation_window_screenshot_count = int(
+                    observation_window_screenshot_count_str
+                )
+            except ValueError:
+                logger.warning(
+                    "AUTOGLM_OBSERVATION_WINDOW_SCREENSHOT_COUNT must be an integer"
+                )
+
+        observation_window_interval_seconds_str = os.getenv(
+            "AUTOGLM_OBSERVATION_WINDOW_INTERVAL_SECONDS"
+        )
+        observation_window_interval_seconds = None
+        if observation_window_interval_seconds_str:
+            try:
+                observation_window_interval_seconds = float(
+                    observation_window_interval_seconds_str
+                )
+            except ValueError:
+                logger.warning(
+                    "AUTOGLM_OBSERVATION_WINDOW_INTERVAL_SECONDS must be a number"
+                )
+
         env_values = {
             "base_url": base_url if base_url else None,
             "model_name": model_name if model_name else None,
@@ -404,6 +488,8 @@ class UnifiedConfigManager:
             "default_max_steps": default_max_steps,
             "default_max_duration_seconds": default_max_duration_seconds,
             "layered_max_turns": layered_max_turns,
+            "observation_window_screenshot_count": observation_window_screenshot_count,
+            "observation_window_interval_seconds": observation_window_interval_seconds,
             "decision_base_url": decision_base_url if decision_base_url else None,
             "decision_model_name": decision_model_name if decision_model_name else None,
             "decision_api_key": decision_api_key if decision_api_key else None,
@@ -489,6 +575,12 @@ class UnifiedConfigManager:
                     "default_max_duration_seconds"
                 ),
                 "layered_max_turns": config_data.get("layered_max_turns"),
+                "observation_window_screenshot_count": config_data.get(
+                    "observation_window_screenshot_count"
+                ),
+                "observation_window_interval_seconds": config_data.get(
+                    "observation_window_interval_seconds"
+                ),
                 "decision_base_url": config_data.get("decision_base_url"),
                 "decision_model_name": config_data.get("decision_model_name"),
                 "decision_api_key": config_data.get("decision_api_key"),
@@ -529,6 +621,8 @@ class UnifiedConfigManager:
         default_max_steps: int | None = None,
         default_max_duration_seconds: int | None = None,
         layered_max_turns: int | None = None,
+        observation_window_screenshot_count: int | None = None,
+        observation_window_interval_seconds: float | None = None,
         decision_base_url: str | None = None,
         decision_model_name: str | None = None,
         decision_api_key: str | None = None,
@@ -537,6 +631,8 @@ class UnifiedConfigManager:
         default_max_steps_set: bool = False,
         default_max_duration_seconds_set: bool = False,
         layered_max_turns_set: bool = False,
+        observation_window_screenshot_count_set: bool = False,
+        observation_window_interval_seconds_set: bool = False,
     ) -> bool:
         """
         保存配置到文件，支持合并模式.
@@ -547,10 +643,12 @@ class UnifiedConfigManager:
             api_key: API key（可选）
             agent_type: Agent 类型（可选，如 "glm-async", "mai"）
             agent_config_params: Agent 特定配置参数（可选）
-            run_limit_type: 运行上限类型（steps/duration/unlimited）
+            run_limit_type: 运行模式（autonomous/steps/duration/unlimited）
             default_max_steps: 默认最大执行步数（可选）
             default_max_duration_seconds: 默认最大持续时长（可选，秒）
             layered_max_turns: 分层代理最大轮数（可选）
+            observation_window_screenshot_count: 动态观察窗口默认截图张数
+            observation_window_interval_seconds: 动态观察窗口默认截图间隔（秒）
             decision_base_url: 决策模型 Base URL（可选）
             decision_model_name: 决策模型名称（可选）
             decision_api_key: 决策模型 API Key（可选）
@@ -576,7 +674,7 @@ class UnifiedConfigManager:
             if agent_config_params is not None:
                 new_config["agent_config_params"] = agent_config_params
             if run_limit_type_set:
-                new_config["run_limit_type"] = run_limit_type or "steps"
+                new_config["run_limit_type"] = run_limit_type or "autonomous"
             elif run_limit_type is not None:
                 new_config["run_limit_type"] = run_limit_type
             if default_max_steps_set:
@@ -595,6 +693,26 @@ class UnifiedConfigManager:
                 new_config["layered_max_turns"] = layered_max_turns
             elif layered_max_turns is not None:
                 new_config["layered_max_turns"] = layered_max_turns
+            if observation_window_screenshot_count_set:
+                new_config["observation_window_screenshot_count"] = (
+                    observation_window_screenshot_count
+                    if observation_window_screenshot_count is not None
+                    else OBSERVATION_WINDOW_SCREENSHOT_COUNT_DEFAULT
+                )
+            elif observation_window_screenshot_count is not None:
+                new_config["observation_window_screenshot_count"] = (
+                    observation_window_screenshot_count
+                )
+            if observation_window_interval_seconds_set:
+                new_config["observation_window_interval_seconds"] = (
+                    observation_window_interval_seconds
+                    if observation_window_interval_seconds is not None
+                    else OBSERVATION_WINDOW_INTERVAL_SECONDS_DEFAULT
+                )
+            elif observation_window_interval_seconds is not None:
+                new_config["observation_window_interval_seconds"] = (
+                    observation_window_interval_seconds
+                )
 
             # 决策模型配置
             if decision_base_url is not None:
@@ -619,6 +737,8 @@ class UnifiedConfigManager:
                         "default_max_steps",
                         "default_max_duration_seconds",
                         "layered_max_turns",
+                        "observation_window_screenshot_count",
+                        "observation_window_interval_seconds",
                         "decision_base_url",
                         "decision_model_name",
                         "decision_api_key",
@@ -711,6 +831,8 @@ class UnifiedConfigManager:
             "run_limit_type",
             "default_max_steps",
             "default_max_duration_seconds",
+            "observation_window_screenshot_count",
+            "observation_window_interval_seconds",
             "decision_base_url",
             "decision_model_name",
             "decision_api_key",
@@ -871,6 +993,13 @@ class UnifiedConfigManager:
         else:
             os.environ["AUTOGLM_LAYERED_MAX_TURNS"] = str(config.layered_max_turns)
 
+        os.environ["AUTOGLM_OBSERVATION_WINDOW_SCREENSHOT_COUNT"] = str(
+            config.observation_window_screenshot_count
+        )
+        os.environ["AUTOGLM_OBSERVATION_WINDOW_INTERVAL_SECONDS"] = str(
+            config.observation_window_interval_seconds
+        )
+
         logger.debug("Configuration synced to environment variables")
 
     # ==================== 工具方法 ====================
@@ -902,6 +1031,12 @@ class UnifiedConfigManager:
                 "run_limit_type": config.run_limit_type,
                 "default_max_steps": config.default_max_steps,
                 "default_max_duration_seconds": config.default_max_duration_seconds,
+                "observation_window_screenshot_count": (
+                    config.observation_window_screenshot_count
+                ),
+                "observation_window_interval_seconds": (
+                    config.observation_window_interval_seconds
+                ),
                 "decision_base_url": config.decision_base_url,
                 "decision_model_name": config.decision_model_name,
                 "decision_api_key": config.decision_api_key,

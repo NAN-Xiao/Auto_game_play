@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -281,6 +282,60 @@ class TestAsyncQwenAgentContext:
         assert _count_images(captured[0]) == 2
         assert _count_images(captured[1]) == 1
         assert "User attached 1 reference image" in _text_part(captured[0][-1])
+
+    def test_stream_openai_times_out_when_model_stalls(self, monkeypatch):
+        agent = _make_agent()
+
+        class HangingStream:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await asyncio.sleep(60)
+                raise StopAsyncIteration
+
+            async def close(self) -> None:
+                self.closed = True
+
+        stream = HangingStream()
+
+        class FakeCompletions:
+            async def create(self, **kwargs):
+                return stream
+
+        monkeypatch.setattr(
+            "AutoGLM_GUI.agents.base.async_agent_base.MODEL_STREAM_CHUNK_TIMEOUT_SECONDS",
+            0.01,
+        )
+        agent.openai_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeCompletions())
+        )
+
+        with pytest.raises(TimeoutError, match="Model stream produced no output"):
+            asyncio.run(_drain(agent._stream_openai([{"role": "user"}])))
+        assert stream.closed is True
+
+    def test_stream_openai_times_out_when_stream_creation_stalls(self, monkeypatch):
+        agent = _make_agent()
+
+        class FakeCompletions:
+            async def create(self, **kwargs):
+                _ = kwargs
+                await asyncio.sleep(60)
+
+        monkeypatch.setattr(
+            "AutoGLM_GUI.agents.base.async_agent_base.MODEL_STREAM_CREATE_TIMEOUT_SECONDS",
+            0.01,
+        )
+        agent.openai_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeCompletions())
+        )
+
+        with pytest.raises(TimeoutError, match="Model stream was not created"):
+            asyncio.run(_drain(agent._stream_openai([{"role": "user"}])))
 
 
 # ---------------------------------------------------------------------------

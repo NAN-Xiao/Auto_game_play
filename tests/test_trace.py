@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextvars
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,7 +60,7 @@ def test_trace_span_writes_nested_records(
     assert child_record["record_type"] == "span"
     assert child_record["parent_span_id"] == parent_span.span_id
     assert sleep_record["parent_span_id"] == child_record["span_id"]
-    assert child_record["attrs"] == {"path": "/tmp/demo", "value": 1}
+    assert child_record["attrs"] == {"path": str(Path("/tmp/demo")), "value": 1}
 
 
 def test_trace_context_sets_trace_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -91,6 +92,23 @@ def test_trace_span_records_error_status(
     assert records[0]["name"] == "error-span"
     assert records[0]["status"] == "error"
     assert records[0]["error"] == {"message": "boom", "type": "RuntimeError"}
+
+
+def test_trace_span_exit_ignores_different_context_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    trace_file = tmp_path / "trace.jsonl"
+    monkeypatch.setenv("AUTOGLM_TRACE_FILE", str(trace_file))
+    monkeypatch.setenv("AUTOGLM_TRACE_ENABLED", "1")
+
+    span = trace_span("cross-context", new_trace=True)
+    enter_context = contextvars.Context()
+    enter_context.run(span.__enter__)
+
+    assert span.__exit__(None, None, None) is False
+
+    records = _read_trace_records(trace_file)
+    assert records[0]["name"] == "cross-context"
 
 
 def test_trace_collects_step_timing_summaries(
@@ -207,6 +225,43 @@ def test_replay_trace_writes_step_with_screenshot_artifact(
     assert screenshot_ref["path"] == "artifacts/step_0001_screen.png"
     artifact_path = trace_file.parent / "runs" / "trace-replay" / screenshot_ref["path"]
     assert artifact_path.read_bytes() == b"fake png bytes"
+
+
+def test_replay_trace_writes_observation_screenshot_as_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trace_file = tmp_path / "trace.jsonl"
+    monkeypatch.setenv("AUTOGLM_TRACE_FILE", str(trace_file))
+    monkeypatch.setenv("AUTOGLM_TRACE_ENABLED", "1")
+    monkeypatch.setenv("AUTOGLM_TRACE_REPLAY_ENABLED", "1")
+
+    screenshot = base64.b64encode(b"observation png bytes").decode("ascii")
+    write_replay_event(
+        task_id="task-obs",
+        trace_id="trace-obs",
+        source="classic_chat",
+        event_record={
+            "seq": 3,
+            "event_type": "observation",
+            "role": "assistant",
+            "created_at": datetime.now(timezone.utc),
+            "payload": {
+                "phase": "sample",
+                "step": 1,
+                "sample_index": 2,
+                "sample_count": 10,
+                "screenshot": screenshot,
+            },
+        },
+    )
+
+    records = _read_replay_records(trace_file, "trace-obs")
+    payload = records[0]["payload"]
+    assert screenshot not in json.dumps(payload, ensure_ascii=False)
+    screenshot_ref = payload["artifacts"]["screenshot"]
+    assert screenshot_ref["path"] == "artifacts/observation_0003_0002_screen.png"
+    artifact_path = trace_file.parent / "runs" / "trace-obs" / screenshot_ref["path"]
+    assert artifact_path.read_bytes() == b"observation png bytes"
 
 
 def test_replay_screenshot_capture_modes(

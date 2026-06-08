@@ -47,18 +47,21 @@ export const en = {
     history_n: 'History Count',
     history_n_hint: 'Number of historical screenshots (1-10)',
     runLimit: 'Run Limit',
+    runLimitAutonomous: 'Autonomous',
+    runLimitAutonomousHint:
+      'The LLM decides when the task is complete. Best for one-shot tasks.',
     runLimitSteps: 'By Steps',
     runLimitDuration: 'By Duration',
     runLimitUnlimited: 'Unlimited',
     runLimitUnlimitedHint:
-      'Tasks keep running until manually stopped or interrupted by an error/safety guard.',
+      'Strict run: tasks keep running until manually stopped or interrupted by an error/safety guard.',
     maxSteps: 'Max Execution Steps',
     maxStepsHint:
-      'Applies when running by steps; duration mode will not stop early by step count.',
+      'Strictly runs by step count; LLM completion will not stop the task early.',
     maxStepsRequired: 'Max execution steps is required',
     maxDuration: 'Max Working Duration (seconds)',
     maxDurationHint:
-      'Applies when running by duration; max steps will not stop the task early.',
+      'Strictly runs by duration; LLM completion will not stop the task early.',
     maxDurationRequired: 'Max working duration is required',
     visionModelTab: 'Vision Model',
     decisionModelTab: 'Decision Model',
@@ -76,6 +79,11 @@ export const en = {
       'Leave empty for unlimited steps; the task will run until manually stopped.',
     advancedConfigWarning:
       'Advanced setting: changes affect default behavior for subsequent tasks and may increase execution time and model API costs.',
+    observationWindow: 'Dynamic Observation Window',
+    observationWindowHint:
+      'When screenshot count is greater than 1, every subsequent task step samples multiple screenshots with this window. Set it to 1 for single-screenshot steps.',
+    observationWindowScreenshotCount: 'Screenshot Count',
+    observationWindowIntervalSeconds: 'Interval Seconds',
     layeredMaxTurns: 'Layered Agent Max Turns',
     layeredMaxTurnsHint: 'Maximum turns for layered agent mode (minimum 1)',
     agentGlmDesc:

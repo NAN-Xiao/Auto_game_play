@@ -238,9 +238,15 @@ export function ChatComponent() {
     api_key: '',
     agent_type: 'glm-async',
     agent_config_params: {} as Record<string, unknown>,
-    run_limit_type: 'steps' as 'steps' | 'duration' | 'unlimited',
+    run_limit_type: 'autonomous' as
+      | 'autonomous'
+      | 'steps'
+      | 'duration'
+      | 'unlimited',
     default_max_steps: 100 as number | '',
     default_max_duration_seconds: 3600 as number | '',
+    observation_window_screenshot_count: 5 as number | '',
+    observation_window_interval_seconds: 3 as number | '',
     layered_max_turns: 50,
     decision_base_url: '',
     decision_model_name: '',
@@ -261,10 +267,14 @@ export function ChatComponent() {
           api_key: data.api_key || undefined,
           agent_type: data.agent_type || 'glm-async',
           agent_config_params: data.agent_config_params || undefined,
-          run_limit_type: data.run_limit_type || 'steps',
+          run_limit_type: data.run_limit_type || 'autonomous',
           default_max_steps: data.default_max_steps ?? null,
           default_max_duration_seconds:
             data.default_max_duration_seconds ?? null,
+          observation_window_screenshot_count:
+            data.observation_window_screenshot_count,
+          observation_window_interval_seconds:
+            data.observation_window_interval_seconds,
           layered_max_turns: data.layered_max_turns || 50,
           decision_base_url: data.decision_base_url || undefined,
           decision_model_name: data.decision_model_name || undefined,
@@ -282,9 +292,13 @@ export function ChatComponent() {
           api_key: data.api_key || '',
           agent_type: data.agent_type || 'glm-async',
           agent_config_params: data.agent_config_params || {},
-          run_limit_type: data.run_limit_type || 'steps',
+          run_limit_type: data.run_limit_type || 'autonomous',
           default_max_steps: data.default_max_steps ?? '',
           default_max_duration_seconds: data.default_max_duration_seconds ?? '',
+          observation_window_screenshot_count:
+            data.observation_window_screenshot_count ?? 5,
+          observation_window_interval_seconds:
+            data.observation_window_interval_seconds ?? 3,
           layered_max_turns: data.layered_max_turns || 50,
           decision_base_url: data.decision_base_url || '',
           decision_model_name: data.decision_model_name || 'glm-4.7',
@@ -386,6 +400,14 @@ export function ChatComponent() {
         run_limit_type: tempConfig.run_limit_type,
         default_max_steps: maxStepsForSave,
         default_max_duration_seconds: maxDurationForSave,
+        observation_window_screenshot_count:
+          tempConfig.observation_window_screenshot_count === ''
+            ? 5
+            : tempConfig.observation_window_screenshot_count,
+        observation_window_interval_seconds:
+          tempConfig.observation_window_interval_seconds === ''
+            ? 3
+            : tempConfig.observation_window_interval_seconds,
         layered_max_turns: tempConfig.layered_max_turns,
         decision_base_url: tempConfig.decision_base_url || undefined,
         decision_model_name: tempConfig.decision_model_name || undefined,
@@ -402,6 +424,12 @@ export function ChatComponent() {
         default_max_duration_seconds:
           normalizedConfig.default_max_duration_seconds ??
           prev.default_max_duration_seconds,
+        observation_window_screenshot_count:
+          normalizedConfig.observation_window_screenshot_count ??
+          prev.observation_window_screenshot_count,
+        observation_window_interval_seconds:
+          normalizedConfig.observation_window_interval_seconds ??
+          prev.observation_window_interval_seconds,
       }));
 
       // 配置已保存，后端支持热更新，无需重启
@@ -839,8 +867,12 @@ export function ChatComponent() {
               {/* 运行上限配置 */}
               <div className="space-y-3">
                 <Label>{t.chat.runLimit || '运行上限'}</Label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-2">
                   {[
+                    {
+                      value: 'autonomous',
+                      label: t.chat.runLimitAutonomous || '自主模式',
+                    },
                     {
                       value: 'steps',
                       label: t.chat.runLimitSteps || '按步数',
@@ -866,6 +898,7 @@ export function ChatComponent() {
                         setTempConfig(prev => ({
                           ...prev,
                           run_limit_type: option.value as
+                            | 'autonomous'
                             | 'steps'
                             | 'duration'
                             | 'unlimited',
@@ -886,6 +919,13 @@ export function ChatComponent() {
                     </Button>
                   ))}
                 </div>
+
+                {tempConfig.run_limit_type === 'autonomous' && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {t.chat.runLimitAutonomousHint ||
+                      'LLM decides when the task is complete.'}
+                  </p>
+                )}
 
                 {tempConfig.run_limit_type === 'steps' && (
                   <div className="space-y-2">
@@ -950,7 +990,7 @@ export function ChatComponent() {
                 {tempConfig.run_limit_type === 'unlimited' && (
                   <p className="text-xs text-slate-500 dark:text-slate-400">
                     {t.chat.runLimitUnlimitedHint ||
-                      'Tasks will keep running until manually stopped or interrupted by an error/watchdog.'}
+                      'Strict run: tasks keep running until manually stopped or interrupted by an error/watchdog.'}
                   </p>
                 )}
 
@@ -958,6 +998,82 @@ export function ChatComponent() {
                   {t.chat?.advancedConfigWarning ||
                     'Advanced setting: changes affect default behavior for subsequent tasks and may increase execution time and model API costs.'}
                 </p>
+              </div>
+
+              {/* 动态观察窗口配置 */}
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label>
+                    {t.chat?.observationWindow || 'Dynamic Observation Window'}
+                  </Label>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {t.chat?.observationWindowHint ||
+                      'When screenshot count is greater than 1, every subsequent task step samples multiple screenshots with this window.'}
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="observation_window_screenshot_count">
+                      {t.chat?.observationWindowScreenshotCount ||
+                        'Screenshot Count'}
+                    </Label>
+                    <Input
+                      id="observation_window_screenshot_count"
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={tempConfig.observation_window_screenshot_count}
+                      onChange={e => {
+                        const rawValue = e.target.value.trim();
+                        setTempConfig(prev => ({
+                          ...prev,
+                          observation_window_screenshot_count:
+                            rawValue === ''
+                              ? ''
+                              : Math.max(
+                                  1,
+                                  Math.min(20, parseInt(rawValue, 10) || 1)
+                                ),
+                        }));
+                      }}
+                      placeholder="5"
+                      className="w-full"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="observation_window_interval_seconds">
+                      {t.chat?.observationWindowIntervalSeconds ||
+                        'Interval Seconds'}
+                    </Label>
+                    <Input
+                      id="observation_window_interval_seconds"
+                      type="number"
+                      min={0}
+                      max={60}
+                      step={0.5}
+                      value={tempConfig.observation_window_interval_seconds}
+                      onChange={e => {
+                        const rawValue = e.target.value.trim();
+                        const parsed = parseFloat(rawValue);
+                        setTempConfig(prev => ({
+                          ...prev,
+                          observation_window_interval_seconds:
+                            rawValue === ''
+                              ? ''
+                              : Math.max(
+                                  0,
+                                  Math.min(
+                                    60,
+                                    Number.isFinite(parsed) ? parsed : 3
+                                  )
+                                ),
+                        }));
+                      }}
+                      placeholder="3"
+                      className="w-full"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* 分层代理最大轮次配置 */}
@@ -1213,10 +1329,14 @@ export function ChatComponent() {
                     api_key: config.api_key || '',
                     agent_type: config.agent_type || 'glm-async',
                     agent_config_params: config.agent_config_params || {},
-                    run_limit_type: config.run_limit_type || 'steps',
+                    run_limit_type: config.run_limit_type || 'autonomous',
                     default_max_steps: config.default_max_steps ?? '',
                     default_max_duration_seconds:
                       config.default_max_duration_seconds ?? '',
+                    observation_window_screenshot_count:
+                      config.observation_window_screenshot_count ?? 5,
+                    observation_window_interval_seconds:
+                      config.observation_window_interval_seconds ?? 3,
                     layered_max_turns: config.layered_max_turns || 50,
                     decision_base_url: config.decision_base_url || '',
                     decision_model_name:
@@ -1352,7 +1472,7 @@ export function ChatComponent() {
                     deviceConnectionType={currentDevice.connection_type}
                     isVisible={currentDevice.id === currentDeviceId}
                     unlimitedStepsEnabled={
-                      config?.run_limit_type === 'unlimited'
+                      config?.run_limit_type !== 'autonomous'
                     }
                   />
                 </div>
@@ -1366,7 +1486,7 @@ export function ChatComponent() {
                     isConfigured={!!config?.base_url}
                     isVisible={currentDevice.id === currentDeviceId}
                     unlimitedStepsEnabled={
-                      config?.run_limit_type === 'unlimited'
+                      config?.run_limit_type !== 'autonomous'
                     }
                     agentType={config?.agent_type}
                   />

@@ -360,6 +360,66 @@ def _normalize_step_payload(
     }
 
 
+def _observation_screenshot_artifact(
+    *,
+    trace_id: str,
+    event_seq: int,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    screenshot = payload.get("screenshot")
+    if not isinstance(screenshot, str) or not screenshot:
+        return None
+
+    mode = _capture_screenshot_mode()
+    if mode == "off":
+        return None
+
+    sample_index = payload.get("sample_index")
+    if not isinstance(sample_index, int) or isinstance(sample_index, bool):
+        sample_index = event_seq
+    try:
+        return write_trace_artifact(
+            trace_id=trace_id,
+            name=f"observation_{event_seq:04d}_{sample_index:04d}_screen.png",
+            mime_type="image/png",
+            data_base64=screenshot,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to write replay observation artifact for trace {} event {}: {}",
+            trace_id,
+            event_seq,
+            exc,
+        )
+        return None
+
+
+def _normalize_observation_payload(
+    *,
+    trace_id: str,
+    event_seq: int,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = {
+        str(key): _json_safe_value(value)
+        for key, value in payload.items()
+        if key != "screenshot"
+    }
+    artifact = _observation_screenshot_artifact(
+        trace_id=trace_id,
+        event_seq=event_seq,
+        payload=payload,
+    )
+    if artifact is not None:
+        artifacts = normalized.get("artifacts")
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+        normalized["artifacts"] = {**artifacts, "screenshot": artifact}
+    elif "screenshot" in payload:
+        normalized["screenshot_omitted"] = True
+    return normalized
+
+
 def write_replay_task_start(
     *,
     task_id: str,
@@ -432,6 +492,12 @@ def write_replay_event(
 
         if event_type == "step":
             record["step"] = _normalize_step_payload(
+                trace_id=trace_id,
+                event_seq=event_seq,
+                payload=payload,
+            )
+        elif event_type == "observation":
+            record["payload"] = _normalize_observation_payload(
                 trace_id=trace_id,
                 event_seq=event_seq,
                 payload=payload,
@@ -750,8 +816,17 @@ def trace_context(trace_id: str, reset_stack: bool = True) -> Iterator[None]:
         yield
     finally:
         if stack_token is not None:
-            _SPAN_STACK.reset(stack_token)
-        _TRACE_ID.reset(trace_token)
+            _safe_context_reset(_SPAN_STACK, stack_token)
+        _safe_context_reset(_TRACE_ID, trace_token)
+
+
+def _safe_context_reset(context_var: ContextVar[Any], token: Token[Any]) -> None:
+    try:
+        context_var.reset(token)
+    except ValueError as exc:
+        if "different Context" not in str(exc):
+            raise
+        logger.warning("Skipped trace context reset from a different async context")
 
 
 @dataclass
@@ -857,9 +932,9 @@ class TraceSpan:
                 _write_trace_record(record)
         finally:
             if self._stack_token is not None:
-                _SPAN_STACK.reset(self._stack_token)
+                _safe_context_reset(_SPAN_STACK, self._stack_token)
             if self._trace_token is not None:
-                _TRACE_ID.reset(self._trace_token)
+                _safe_context_reset(_TRACE_ID, self._trace_token)
 
         return False
 

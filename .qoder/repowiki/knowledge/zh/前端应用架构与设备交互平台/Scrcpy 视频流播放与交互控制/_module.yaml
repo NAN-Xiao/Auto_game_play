@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: frontend/scrcpy_player
+title: Scrcpy 视频流播放与交互控制
+scope:
+    - frontend/src/components/ScrcpyPlayer.tsx
+    - frontend/src/lib/webcodecs-utils.ts
+    - frontend/src/hooks/useScreenshotPolling.ts
+source_files: []
+depends_on: []
+related_to:
+    - path: frontend/chat_feature

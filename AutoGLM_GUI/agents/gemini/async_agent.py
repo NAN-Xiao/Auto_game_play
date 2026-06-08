@@ -12,6 +12,7 @@ from typing import Any
 
 from AutoGLM_GUI.actions import ActionResult
 from AutoGLM_GUI.agents.base import AsyncAgentBase
+from AutoGLM_GUI.agents.base.async_agent_base import STRICT_FINISH_RETRY_LIMIT
 from AutoGLM_GUI.logger import logger
 from AutoGLM_GUI.model import MessageBuilder
 from AutoGLM_GUI.model.error_details import (
@@ -34,10 +35,16 @@ class AsyncGeminiAgent(AsyncAgentBase):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self._consecutive_invalid_tool_calls = 0
+        self._pending_task: str | None = None
+        self._pending_reference_images: list[dict[str, str]] = []
+        self._last_observation_window: list[Any] = []
 
     def reset(self) -> None:
         super().reset()
         self._consecutive_invalid_tool_calls = 0
+        self._pending_task = None
+        self._pending_reference_images = []
+        self._last_observation_window = []
 
     def _get_default_system_prompt(self, lang: str) -> str:
         return get_system_prompt(lang)
@@ -50,13 +57,18 @@ class AsyncGeminiAgent(AsyncAgentBase):
         reference_images: list[dict[str, str]] | None = None,
     ) -> None:
         reference_images = reference_images or []
+        self._consecutive_invalid_tool_calls = 0
+        if self._observation_window_count() > 1:
+            self._pending_task = task
+            self._pending_reference_images = reference_images.copy()
+            return
+
         reference_notice = MessageBuilder.build_user_reference_images_notice(
             len(reference_images)
         )
         reference_section = (
             f"\n\nUser reference images: {reference_notice}" if reference_notice else ""
         )
-        self._consecutive_invalid_tool_calls = 0
         self._context.append(
             MessageBuilder.create_user_message_with_images(
                 text=f"{task}{reference_section}\n\nCurrent app: {current_app}",
@@ -71,18 +83,33 @@ class AsyncGeminiAgent(AsyncAgentBase):
         """执行单步：调用 LLM → 解析 tool call → 执行动作。"""
         self._step_count += 1
         screenshot = None
+        recovery_instruction = self._consume_strict_finish_recovery_instruction()
+        reuse_last_observation = (
+            recovery_instruction is not None
+            and self._strict_finish_recovery_attempts < STRICT_FINISH_RETRY_LIMIT
+            and self._last_observation_window
+        )
+        if reuse_last_observation:
+            self._strict_finish_recovery_attempts += 1
 
-        # 1. 获取截图（非首步）
-        if self._step_count > 1:
+        # 1. 获取截图（非首步，或首步启用观察窗口时）
+        if (
+            self._step_count > 1
+            or self._pending_task is not None
+            or recovery_instruction is not None
+        ):
             try:
-                with trace_span(
-                    "step.capture_screenshot",
-                    attrs={
-                        "step": self._step_count,
-                        "agent_type": self.__class__.__name__,
-                    },
-                ):
-                    screenshot = await asyncio.to_thread(self.device.get_screenshot)
+                if reuse_last_observation:
+                    screenshots = self._last_observation_window.copy()
+                else:
+                    screenshots = []
+                    async for observation_item in self._observe_observation_window():
+                        if isinstance(observation_item, list):
+                            screenshots = observation_item
+                        else:
+                            yield observation_item
+                    self._last_observation_window = screenshots.copy()
+                screenshot = screenshots[-1]
                 with trace_span(
                     "step.get_current_app",
                     attrs={
@@ -111,12 +138,75 @@ class AsyncGeminiAgent(AsyncAgentBase):
                 "step.build_message",
                 attrs={"step": self._step_count, "agent_type": self.__class__.__name__},
             ):
-                self._context.append(
-                    MessageBuilder.create_user_message(
-                        text=f"Current app: {current_app}",
-                        image_base64=screenshot.base64_data,
+                stateless_observation_turn = self._prepare_context_for_model_turn()
+                if self._pending_task is not None:
+                    observation_notice = self._build_observation_window_notice(
+                        screenshot_count=len(screenshots),
+                        reference_image_count=len(self._pending_reference_images),
                     )
-                )
+                    stateless_section = (
+                        "\n\n"
+                        + self._build_stateless_observation_turn_notice(
+                            include_task=False
+                        )
+                        if stateless_observation_turn
+                        else ""
+                    )
+                    observation_section = (
+                        f"\n\nObservation context: {observation_notice}"
+                        if observation_notice
+                        else ""
+                    )
+                    images = [
+                        {"mime_type": "image/png", "data": shot.base64_data}
+                        for shot in screenshots
+                    ] + [*self._pending_reference_images]
+                    self._context.append(
+                        MessageBuilder.create_user_message_with_images(
+                            text=(
+                                f"{self._pending_task}{stateless_section}"
+                                f"{observation_section}"
+                                f"\n\nCurrent app: {current_app}"
+                            ),
+                            images=images,
+                        )
+                    )
+                    self._pending_task = None
+                    self._pending_reference_images = []
+                else:
+                    observation_notice = self._build_observation_window_notice(
+                        screenshot_count=len(screenshots)
+                    )
+                    recovery_section = (
+                        f"\n\nStrict mode recovery: {recovery_instruction}"
+                        if recovery_instruction
+                        else ""
+                    )
+                    stateless_section = (
+                        self._build_stateless_observation_turn_notice(include_task=True)
+                        + "\n\n"
+                        if stateless_observation_turn
+                        else ""
+                    )
+                    text_content = (
+                        f"{stateless_section}Current app: {current_app}"
+                        f"\n\nObservation context: {observation_notice}"
+                        f"{recovery_section}"
+                        if observation_notice
+                        else (
+                            f"{stateless_section}Current app: {current_app}"
+                            f"{recovery_section}"
+                        )
+                    )
+                    self._context.append(
+                        MessageBuilder.create_user_message_with_images(
+                            text=text_content,
+                            images=[
+                                {"mime_type": "image/png", "data": shot.base64_data}
+                                for shot in screenshots
+                            ],
+                        )
+                    )
 
         # 2. 调用 LLM with tools
         try:

@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: frontend/chat_feature
+title: 设备交互与实时监控系统
+scope:
+    - frontend/src/routes/chat.tsx
+    - frontend/src/components/ChatKitPanel.tsx
+    - frontend/src/hooks/useTaskSessionConversation.ts
+source_files: []
+depends_on: []
+related_to:
+    - path: frontend/device_control
+    - path: frontend/scrcpy_player

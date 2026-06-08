@@ -1,0 +1,16 @@
+schema_version: 1
+module_path: frontend/device_control
+title: 设备控制与交互面板
+scope:
+    - frontend/src/routes/index.tsx
+    - frontend/src/components/DeviceCard.tsx
+    - frontend/src/components/DevicePanel.tsx
+    - frontend/src/components/DeviceSidebar.tsx
+    - frontend/src/components/GroupedDeviceList.tsx
+    - frontend/src/components/GroupManageDialog.tsx
+    - frontend/src/hooks/useDeviceGroups.ts
+    - frontend/src/lib/device-context.tsx
+source_files: []
+depends_on: []
+related_to:
+    - path: frontend/chat_feature
