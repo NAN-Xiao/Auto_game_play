@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Smartphone,
+  SmartphoneNfc,
   Settings,
   ChevronLeft,
   ChevronRight,
-  Plug,
+  Usb,
   Plus,
   Wifi,
   AlertCircle,
+  Radar,
   Loader2,
   CheckCircle,
   XCircle,
-  FolderCog,
+  Folders,
+  ScanQrCode,
 } from 'lucide-react';
 import { GroupedDeviceList } from './GroupedDeviceList';
 import { Button } from '@/components/ui/button';
@@ -841,7 +844,7 @@ export function DeviceSidebar({
           {devices.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
-                <Plug className="h-8 w-8 text-slate-400" />
+                <Usb className="h-8 w-8 text-slate-400" />
               </div>
               <p className="mt-4 font-medium text-slate-900 dark:text-slate-100">
                 {t.deviceSidebar.noDevicesConnected}
@@ -883,7 +886,7 @@ export function DeviceSidebar({
               onClick={onOpenGroupManager}
               className="w-full justify-start gap-2 rounded-full border-slate-200 dark:border-slate-700"
             >
-              <FolderCog className="h-4 w-4" />
+              <Folders className="h-4 w-4" />
               {t.deviceSidebar.manageGroups || '管理分组'}
             </Button>
           )}
@@ -975,7 +978,7 @@ export function DeviceSidebar({
                   if (!isScanning && directDevices.length === 0) {
                     return (
                       <div className="rounded-lg bg-slate-50 dark:bg-slate-900 p-4 text-center">
-                        <Wifi className="mx-auto h-8 w-8 text-slate-400" />
+                        <Radar className="mx-auto h-8 w-8 text-slate-400" />
                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
                           {t.deviceSidebar.noDirectDevices}
                         </p>
@@ -995,7 +998,7 @@ export function DeviceSidebar({
                             <div className="flex items-start justify-between">
                               <div className="flex-1">
                                 <div className="flex items-center gap-2">
-                                  <Smartphone className="h-4 w-4 text-[#1d9bf0]" />
+                                  <Wifi className="h-4 w-4 text-[#1d9bf0]" />
                                   <span className="font-medium text-slate-900 dark:text-slate-100">
                                     {device.name}
                                   </span>
@@ -1162,7 +1165,7 @@ export function DeviceSidebar({
                   if (!isScanning && pairingDevices.length === 0) {
                     return (
                       <div className="rounded-lg bg-slate-50 dark:bg-slate-900 p-4 text-center">
-                        <Wifi className="mx-auto h-8 w-8 text-slate-400" />
+                        <ScanQrCode className="mx-auto h-8 w-8 text-slate-400" />
                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
                           {t.deviceSidebar.noPairingDevices}
                         </p>
@@ -1182,7 +1185,7 @@ export function DeviceSidebar({
                             <div className="flex items-start justify-between">
                               <div className="flex-1">
                                 <div className="flex items-center gap-2">
-                                  <Smartphone className="h-4 w-4 text-[#1d9bf0]" />
+                                  <SmartphoneNfc className="h-4 w-4 text-[#1d9bf0]" />
                                   <span className="font-medium text-slate-900 dark:text-slate-100">
                                     {device.name}
                                   </span>

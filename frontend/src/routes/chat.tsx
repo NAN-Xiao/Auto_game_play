@@ -37,45 +37,18 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
-  Server,
-  ExternalLink,
   Brain,
   Layers,
-  Sparkles,
+  Bot,
   Cpu,
   Info,
+  MonitorSmartphone,
+  ScanEye,
   Smartphone,
   Loader2,
 } from 'lucide-react';
 import { useTranslation } from '../lib/i18n-context';
 import { useDevices } from '../lib/device-context';
-
-// 视觉模型预设配置
-const VISION_PRESETS = [
-  {
-    name: 'bigmodel',
-    config: {
-      base_url: 'https://open.bigmodel.cn/api/paas/v4',
-      model_name: 'autoglm-phone',
-    },
-    apiKeyUrl: 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys',
-  },
-  {
-    name: 'modelscope',
-    config: {
-      base_url: 'https://api-inference.modelscope.cn/v1',
-      model_name: 'ZhipuAI/AutoGLM-Phone-9B',
-    },
-    apiKeyUrl: 'https://www.modelscope.cn/my/myaccesstoken',
-  },
-  {
-    name: 'custom',
-    config: {
-      base_url: '',
-      model_name: 'autoglm-phone-9b',
-    },
-  },
-] as const;
 
 // Agent 类型预设配置
 const AGENT_PRESETS = [
@@ -99,7 +72,7 @@ const AGENT_PRESETS = [
     name: 'gemini',
     displayName: 'General Vision Agent',
     descriptionKey: 'agentGeminiDesc',
-    icon: Sparkles,
+    icon: ScanEye,
     defaultConfig: {},
   },
   {
@@ -127,49 +100,6 @@ const AGENT_PRESETS = [
   },
 ] as const;
 
-// 决策模型预设配置（与视觉模型保持一致）
-const DECISION_PRESETS = [
-  {
-    name: 'bigmodel',
-    config: {
-      decision_base_url: 'https://open.bigmodel.cn/api/paas/v4',
-      decision_model_name: 'glm-4.7',
-    },
-    apiKeyUrl: 'https://bigmodel.cn/usercenter/proj-mgmt/apikeys',
-  },
-  {
-    name: 'modelscope',
-    config: {
-      decision_base_url: 'https://api-inference.modelscope.cn/v1',
-      decision_model_name: 'Qwen/Qwen3-235B-A22B-Instruct-2507',
-    },
-    apiKeyUrl: 'https://www.modelscope.cn/my/myaccesstoken',
-  },
-  {
-    name: 'custom',
-    config: {
-      decision_base_url: '',
-      decision_model_name: '',
-    },
-  },
-] as const;
-
-function getSelectedVisionPreset(baseUrl: string) {
-  return (
-    VISION_PRESETS.find(
-      preset => preset.name !== 'custom' && preset.config.base_url === baseUrl
-    )?.name ?? 'custom'
-  );
-}
-
-function getSelectedDecisionPreset(baseUrl: string) {
-  return (
-    DECISION_PRESETS.find(
-      preset =>
-        preset.name !== 'custom' && preset.config.decision_base_url === baseUrl
-    )?.name ?? 'custom'
-  );
-}
 
 // Search params type for URL persistence
 type ChatSearchParams = {
@@ -233,8 +163,8 @@ export function ChatComponent() {
     message: string;
   } | null>(null);
   const [tempConfig, setTempConfig] = useState({
-    base_url: VISION_PRESETS[0].config.base_url as string,
-    model_name: VISION_PRESETS[0].config.model_name as string,
+    base_url: '',
+    model_name: '',
     api_key: '',
     agent_type: 'glm-async',
     agent_config_params: {} as Record<string, unknown>,
@@ -252,10 +182,6 @@ export function ChatComponent() {
     decision_model_name: '',
     decision_api_key: '',
   });
-  const selectedVisionPreset = getSelectedVisionPreset(tempConfig.base_url);
-  const selectedDecisionPreset = getSelectedDecisionPreset(
-    tempConfig.decision_base_url
-  );
 
   useEffect(() => {
     const loadConfiguration = async () => {
@@ -280,15 +206,9 @@ export function ChatComponent() {
           decision_model_name: data.decision_model_name || undefined,
           decision_api_key: data.decision_api_key || undefined,
         });
-        // 当后端返回空配置时，使用智谱预设作为默认值
-        const useDefault = !data.base_url;
         setTempConfig({
-          base_url: useDefault
-            ? VISION_PRESETS[0].config.base_url
-            : data.base_url,
-          model_name: useDefault
-            ? VISION_PRESETS[0].config.model_name
-            : data.model_name,
+          base_url: data.base_url || '',
+          model_name: data.model_name || '',
           api_key: data.api_key || '',
           agent_type: data.agent_type || 'glm-async',
           agent_config_params: data.agent_config_params || {},
@@ -301,11 +221,11 @@ export function ChatComponent() {
             data.observation_window_interval_seconds ?? 3,
           layered_max_turns: data.layered_max_turns || 50,
           decision_base_url: data.decision_base_url || '',
-          decision_model_name: data.decision_model_name || 'glm-4.7',
+          decision_model_name: data.decision_model_name || '',
           decision_api_key: data.decision_api_key || '',
         });
 
-        if (useDefault) {
+        if (!data.base_url) {
           setShowConfig(true);
         }
       } catch (err) {
@@ -555,80 +475,6 @@ export function ChatComponent() {
               value="vision"
               className="space-y-4 mt-4 overflow-y-auto flex-1 min-h-0"
             >
-              {/* 视觉模型预设配置 */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">
-                  {t.chat.selectPreset}
-                </Label>
-                <div className="grid grid-cols-1 gap-2">
-                  {VISION_PRESETS.map(preset => (
-                    <div key={preset.name} className="relative">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setTempConfig(prev => ({
-                            ...prev,
-                            ...(preset.name === 'custom'
-                              ? getSelectedVisionPreset(prev.base_url) ===
-                                'custom'
-                                ? {}
-                                : {
-                                    base_url: preset.config.base_url,
-                                    model_name: preset.config.model_name,
-                                  }
-                              : {
-                                  base_url: preset.config.base_url,
-                                  model_name: preset.config.model_name,
-                                }),
-                          }))
-                        }
-                        className={`w-full text-left p-3 rounded-lg border transition-all ${
-                          selectedVisionPreset === preset.name
-                            ? 'border-[#1d9bf0] bg-[#1d9bf0]/5'
-                            : 'border-slate-200 dark:border-slate-700 hover:border-[#1d9bf0]/50 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Server
-                            className={`w-4 h-4 ${
-                              selectedVisionPreset === preset.name
-                                ? 'text-[#1d9bf0]'
-                                : 'text-slate-400 dark:text-slate-500'
-                            }`}
-                          />
-                          <span className="font-medium text-sm text-slate-900 dark:text-slate-100">
-                            {
-                              t.presetConfigs[
-                                preset.name as keyof typeof t.presetConfigs
-                              ].name
-                            }
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 ml-6">
-                          {
-                            t.presetConfigs[
-                              preset.name as keyof typeof t.presetConfigs
-                            ].description
-                          }
-                        </p>
-                      </button>
-                      {'apiKeyUrl' in preset && (
-                        <a
-                          href={preset.apiKeyUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={e => e.stopPropagation()}
-                          className="absolute top-3 right-3 p-1.5 rounded-md hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors group"
-                          title={t.chat.getApiKey || '获取 API Key'}
-                        >
-                          <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#1d9bf0] transition-colors" />
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
               <div className="space-y-2">
                 <Label htmlFor="base_url">{t.chat.baseUrl} *</Label>
                 <Input
@@ -1115,85 +961,6 @@ export function ChatComponent() {
                 </div>
               </div>
 
-              {/* 决策模型预设配置 */}
-              <div className="space-y-2">
-                <Label className="text-sm font-medium">
-                  {t.chat.selectDecisionPreset}
-                </Label>
-                <div className="grid grid-cols-1 gap-2">
-                  {DECISION_PRESETS.map(preset => (
-                    <div key={preset.name} className="relative">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setTempConfig(prev => ({
-                            ...prev,
-                            ...(preset.name === 'custom'
-                              ? getSelectedDecisionPreset(
-                                  prev.decision_base_url
-                                ) === 'custom'
-                                ? {}
-                                : {
-                                    decision_base_url:
-                                      preset.config.decision_base_url,
-                                    decision_model_name:
-                                      preset.config.decision_model_name,
-                                  }
-                              : {
-                                  decision_base_url:
-                                    preset.config.decision_base_url,
-                                  decision_model_name:
-                                    preset.config.decision_model_name,
-                                }),
-                          }))
-                        }
-                        className={`w-full text-left p-3 rounded-lg border transition-all ${
-                          selectedDecisionPreset === preset.name
-                            ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/50'
-                            : 'border-slate-200 dark:border-slate-700 hover:border-indigo-500/50 hover:bg-indigo-50 dark:hover:bg-indigo-950/30'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Server
-                            className={`w-4 h-4 ${
-                              selectedDecisionPreset === preset.name
-                                ? 'text-indigo-600 dark:text-indigo-400'
-                                : 'text-slate-400 dark:text-slate-500'
-                            }`}
-                          />
-                          <span className="font-medium text-sm text-slate-900 dark:text-slate-100">
-                            {
-                              t.presetConfigs[
-                                preset.name as keyof typeof t.presetConfigs
-                              ].name
-                            }
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 ml-6">
-                          {
-                            t.presetConfigs[
-                              preset.name as keyof typeof t.presetConfigs
-                            ].description
-                          }
-                        </p>
-                      </button>
-                      {'apiKeyUrl' in preset && (
-                        <a
-                          href={preset.apiKeyUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={e => e.stopPropagation()}
-                          className="absolute top-3 right-3 p-1.5 rounded-md hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors group"
-                          title={t.chat.getApiKey || '获取 API Key'}
-                        >
-                          <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors" />
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
               {/* Decision Base URL */}
               <div className="space-y-2">
                 <Label htmlFor="decision_base_url">
@@ -1384,7 +1151,7 @@ export function ChatComponent() {
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
                   }`}
                 >
-                  <Sparkles className="w-4 h-4" />
+                  <MonitorSmartphone className="w-4 h-4" />
                   {t.chatkit?.classicMode || '经典模式'}
                 </button>
               </TooltipTrigger>
@@ -1436,23 +1203,8 @@ export function ChatComponent() {
             <div className="flex-1 flex items-center justify-center bg-slate-50 dark:bg-slate-950">
               <div className="text-center">
                 <div className="flex h-20 w-20 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 mx-auto mb-4">
-                  <svg
-                    className="w-10 h-10 text-slate-400"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.5}
-                      d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
-                    />
-                  </svg>
+                  <Smartphone className="w-10 h-10 text-slate-400" />
                 </div>
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-2">
-                  {t.chat.welcomeTitle}
-                </h3>
                 <p className="text-slate-500 dark:text-slate-400">
                   {t.chat.connectDevice}
                 </p>

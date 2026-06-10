@@ -34,16 +34,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  AlertCircle,
+  BadgeCheck,
+  FileScan,
   Loader2,
   Trash2,
-  CheckCircle,
-  XCircle,
-  Clock,
-  User,
+  Timer,
+  UserRound,
   Bot,
   ChevronDown,
   ChevronRight,
-  Eye,
 } from 'lucide-react';
 import { useTranslation } from '../lib/i18n-context';
 import { useDevices } from '../lib/device-context';
@@ -353,7 +353,7 @@ export function HistoryComponent() {
                           variant="outline"
                           className="text-green-600 border-green-300 dark:text-green-400 dark:border-green-700"
                         >
-                          <CheckCircle className="w-3 h-3 mr-1" />
+                          <BadgeCheck className="w-3 h-3 mr-1" />
                           {t.historyPage.success}
                         </Badge>
                       ) : (
@@ -361,7 +361,7 @@ export function HistoryComponent() {
                           variant="outline"
                           className="text-red-600 border-red-300 dark:text-red-400 dark:border-red-700"
                         >
-                          <XCircle className="w-3 h-3 mr-1" />
+                          <AlertCircle className="w-3 h-3 mr-1" />
                           {t.historyPage.failed}
                         </Badge>
                       )}
@@ -384,7 +384,7 @@ export function HistoryComponent() {
 
                       {/* Duration */}
                       <span className="text-slate-500 dark:text-slate-400 flex items-center">
-                        <Clock className="w-3 h-3 mr-1" />
+                        <Timer className="w-3 h-3 mr-1" />
                         {formatDuration(record.duration_ms)}
                       </span>
 
@@ -406,7 +406,7 @@ export function HistoryComponent() {
                         handleViewDetail(record);
                       }}
                     >
-                      <Eye className="w-4 h-4" />
+                      <FileScan className="w-4 h-4" />
                     </Button>
                     <Button
                       variant="ghost"
@@ -490,9 +490,9 @@ export function HistoryComponent() {
           <DialogHeader className="flex-shrink-0">
             <DialogTitle className="flex items-center gap-2">
               {selectedRecord?.success ? (
-                <CheckCircle className="w-5 h-5 text-green-500" />
+                <BadgeCheck className="w-5 h-5 text-green-500" />
               ) : (
-                <XCircle className="w-5 h-5 text-red-500" />
+                <AlertCircle className="w-5 h-5 text-red-500" />
               )}
               {t.historyPage.detailTitle || '对话详情'}
             </DialogTitle>
@@ -519,7 +519,7 @@ export function HistoryComponent() {
                         {msg.role === 'user' ? (
                           <div className="flex items-start gap-3">
                             <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center flex-shrink-0">
-                              <User className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                              <UserRound className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                             </div>
                             <div className="flex-1 p-3 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
                               <p className="text-sm text-slate-900 dark:text-slate-100">
@@ -662,7 +662,7 @@ export function HistoryComponent() {
                     )}
                   </span>
                   <span className="flex items-center">
-                    <Clock className="w-3 h-3 mr-1" />
+                    <Timer className="w-3 h-3 mr-1" />
                     {formatDuration(selectedRecord.duration_ms)}
                   </span>
                   <Badge className={getSourceColor(selectedRecord.source)}>

@@ -1,12 +1,12 @@
 import React from 'react';
 import { Link, useMatchRoute } from '@tanstack/react-router';
 import {
-  MessageSquare,
-  ListChecks,
-  FileText,
-  History,
-  Clock,
-  Terminal,
+  BotMessageSquare,
+  CalendarClock,
+  Logs,
+  NotebookTabs,
+  SquareTerminal,
+  Workflow,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -35,37 +35,37 @@ export function NavigationSidebar({ className }: NavigationSidebarProps) {
   const navigationItems: NavigationItem[] = [
     {
       id: 'chat',
-      icon: MessageSquare,
+      icon: BotMessageSquare,
       label: t.navigation.chat,
       path: '/chat',
     },
     {
       id: 'workflows',
-      icon: ListChecks,
+      icon: Workflow,
       label: t.navigation.workflows,
       path: '/workflows',
     },
     {
       id: 'history',
-      icon: History,
+      icon: NotebookTabs,
       label: t.navigation.history || '历史记录',
       path: '/history',
     },
     {
       id: 'scheduled-tasks',
-      icon: Clock,
+      icon: CalendarClock,
       label: t.navigation.scheduledTasks || '定时任务',
       path: '/scheduled-tasks',
     },
     {
       id: 'logs',
-      icon: FileText,
+      icon: Logs,
       label: t.navigation.logs,
       path: '/logs',
     },
     {
       id: 'terminal',
-      icon: Terminal,
+      icon: SquareTerminal,
       label: t.navigation.terminal,
       path: '/terminal',
     },
@@ -73,18 +73,18 @@ export function NavigationSidebar({ className }: NavigationSidebarProps) {
 
   return (
     <nav
-      className={`w-16 h-full flex flex-col bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 ${className || ''}`}
+      className={`h-full w-18 border-r app-divider bg-sidebar/94 backdrop-blur-xl ${className || ''}`}
     >
-      <div className="flex flex-col items-center py-4 gap-2">
+      <div className="flex flex-col items-center gap-3 px-2 py-5">
         {/* Logo at top - clickable to navigate to /chat */}
-        <div className="mb-4 pb-4 border-b border-slate-200 dark:border-slate-800 w-full flex justify-center">
+        <div className="mb-3 flex w-full justify-center border-b app-divider pb-4">
           <Tooltip>
             <TooltipTrigger asChild>
               <Link to="/chat" className="block">
                 <img
                   src={logoImage}
                   alt="AutoGLM Logo"
-                  className="w-10 h-10 object-contain cursor-pointer hover:opacity-80 transition-opacity"
+                  className="h-11 w-11 cursor-pointer object-contain transition-opacity hover:opacity-85"
                 />
               </Link>
             </TooltipTrigger>
@@ -104,10 +104,10 @@ export function NavigationSidebar({ className }: NavigationSidebarProps) {
               <TooltipTrigger asChild>
                 <Link
                   to={item.path}
-                  className={`w-10 h-10 rounded-lg transition-all flex items-center justify-center ${
+                  className={`flex h-11 w-11 items-center justify-center rounded-2xl border transition-all duration-200 ${
                     isActive
-                      ? 'bg-[#1d9bf0]/10 text-[#1d9bf0] hover:bg-[#1d9bf0]/20'
-                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      ? 'border-primary/20 bg-primary/12 text-primary shadow-sm'
+                      : 'border-transparent text-muted-foreground hover:border-border/70 hover:bg-accent/55 hover:text-accent-foreground'
                   }`}
                 >
                   <Icon className="w-5 h-5" />

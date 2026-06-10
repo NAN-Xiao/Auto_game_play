@@ -43,6 +43,18 @@ MAX_SEGMENT_INPUT_CHARS = 16000
 MAX_REPORT_SCREENSHOTS = 6
 MAX_SEGMENT_SCREENSHOT_REFS = 2
 MAX_OBSERVED_ITEM_SUMMARIES = 80
+MAX_STATE_SNAPSHOT_ITEMS = 12
+MAX_SESSION_SNAPSHOT_RUNS = 6
+
+_STATE_SNAPSHOT_LIST_FIELDS = (
+    "progress",
+    "resources",
+    "gates",
+    "prompts",
+    "pressures",
+    "changes",
+    "evidence",
+)
 
 
 @dataclass(frozen=True)
@@ -53,6 +65,123 @@ class ReportContext:
     text: str
     step_count: int
     screenshots: list[dict[str, str]]
+
+
+def _coerce_text(value: Any, *, limit: int = 240) -> str:
+    text = _truncate_text(value, limit)
+    return text.strip()
+
+
+def _empty_state_snapshot() -> dict[str, Any]:
+    return {
+        "object": "",
+        "stage": "",
+        "progress": [],
+        "resources": [],
+        "gates": [],
+        "prompts": [],
+        "pressures": [],
+        "changes": [],
+        "evidence": [],
+        "uncertainties": [],
+    }
+
+
+def _normalize_state_snapshot_entry(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, str):
+        text = _coerce_text(value)
+        return {"label": text} if text else None
+    if not isinstance(value, dict):
+        return None
+
+    entry: dict[str, Any] = {}
+    for key in ("type", "label", "status", "value", "change", "detail"):
+        text = _coerce_text(value.get(key))
+        if text:
+            entry[key] = text
+
+    confidence = value.get("confidence")
+    if isinstance(confidence, (int, float)):
+        entry["confidence"] = max(0.0, min(float(confidence), 1.0))
+
+    if "label" not in entry:
+        for key in ("value", "detail", "status", "change"):
+            if key in entry:
+                entry["label"] = str(entry[key])
+                break
+    return entry or None
+
+
+def _normalize_state_snapshot(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+
+    snapshot = _empty_state_snapshot()
+    snapshot["object"] = _coerce_text(raw.get("object"))
+    snapshot["stage"] = _coerce_text(raw.get("stage"))
+
+    for field in _STATE_SNAPSHOT_LIST_FIELDS:
+        values = raw.get(field)
+        if not isinstance(values, list):
+            continue
+        items: list[dict[str, Any]] = []
+        for value in values:
+            normalized = _normalize_state_snapshot_entry(value)
+            if normalized is not None:
+                items.append(normalized)
+            if len(items) >= MAX_STATE_SNAPSHOT_ITEMS:
+                break
+        snapshot[field] = items
+
+    uncertainties = raw.get("uncertainties")
+    if isinstance(uncertainties, list):
+        snapshot["uncertainties"] = [
+            text
+            for value in uncertainties
+            if (text := _coerce_text(value, limit=320))
+        ][:MAX_STATE_SNAPSHOT_ITEMS]
+
+    if any(snapshot[field] for field in snapshot):
+        return snapshot
+    return None
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    candidates = [text.strip()]
+    if "```" in text:
+        for chunk in text.split("```"):
+            stripped = chunk.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("json"):
+                stripped = stripped[4:].strip()
+            candidates.append(stripped)
+
+    for candidate in candidates:
+        try:
+            loaded = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(loaded, dict):
+            return loaded
+    return None
+
+
+def _parse_segment_summary_artifact(content: Any) -> dict[str, Any] | None:
+    if not isinstance(content, str):
+        return None
+    payload = _extract_json_object(content)
+    if payload is None:
+        return None
+
+    summary = _coerce_text(payload.get("summary"), limit=2400)
+    state_snapshot = _normalize_state_snapshot(payload.get("state_snapshot"))
+    if not summary and state_snapshot is None:
+        return None
+    return {
+        "summary": summary or _truncate_text(content, 2400),
+        "state_snapshot": state_snapshot,
+    }
 
 
 def _truncate_text(value: Any, limit: int = MAX_TEXT_FIELD_CHARS) -> str:
@@ -420,6 +549,217 @@ def _existing_segment_summaries(
     return summaries
 
 
+def _format_state_snapshot_entry(entry: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("type", "label", "status", "value", "change", "detail"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(f"{key}={value.strip()}")
+    confidence = entry.get("confidence")
+    if isinstance(confidence, (int, float)):
+        parts.append(f"confidence={float(confidence):.2f}")
+    return "; ".join(parts)
+
+
+def _append_state_snapshot_lines(
+    lines: list[str],
+    snapshot: dict[str, Any],
+    *,
+    title: str,
+) -> None:
+    lines.append(title)
+    object_name = snapshot.get("object")
+    if isinstance(object_name, str) and object_name.strip():
+        lines.append(f"- object: {object_name.strip()}")
+    stage = snapshot.get("stage")
+    if isinstance(stage, str) and stage.strip():
+        lines.append(f"- stage: {stage.strip()}")
+
+    for field in _STATE_SNAPSHOT_LIST_FIELDS:
+        values = snapshot.get(field)
+        if not isinstance(values, list) or not values:
+            continue
+        lines.append(f"- {field}:")
+        for entry in values:
+            if isinstance(entry, dict):
+                formatted = _format_state_snapshot_entry(entry)
+                if formatted:
+                    lines.append(f"  - {formatted}")
+
+    uncertainties = snapshot.get("uncertainties")
+    if isinstance(uncertainties, list) and uncertainties:
+        lines.append("- uncertainties:")
+        for item in uncertainties:
+            if isinstance(item, str) and item.strip():
+                lines.append(f"  - {item.strip()}")
+
+
+def _is_reportable_experience_task(task: TaskRecord) -> bool:
+    return (
+        str(task.get("source")) == "chat"
+        and str(task.get("executor_key")) in {"classic_chat", "layered_chat"}
+        and str(task.get("status"))
+        in {"SUCCEEDED", "FAILED", "CANCELLED", "INTERRUPTED"}
+        and int(task.get("step_count") or 0) > 0
+    )
+
+
+def _sort_tasks_chronologically(tasks: list[TaskRecord]) -> list[TaskRecord]:
+    return sorted(
+        tasks,
+        key=lambda task: (
+            str(task.get("finished_at") or ""),
+            str(task.get("created_at") or ""),
+            str(task.get("id") or ""),
+        ),
+    )
+
+
+def _latest_state_snapshot_from_events(
+    events: list[TaskEventRecord],
+) -> tuple[tuple[int, int], dict[str, Any]] | None:
+    segment_summaries = sorted(
+        _existing_segment_summaries(events).values(),
+        key=lambda payload: (
+            int(payload.get("start_step") or 0),
+            int(payload.get("end_step") or 0),
+        ),
+    )
+    for payload in reversed(segment_summaries):
+        snapshot = _normalize_state_snapshot(payload.get("state_snapshot"))
+        if snapshot is None:
+            continue
+        return (
+            (
+                int(payload.get("start_step") or 0),
+                int(payload.get("end_step") or 0),
+            ),
+            snapshot,
+        )
+    return None
+
+
+def _snapshot_entry_key(entry: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(entry.get("type") or "").strip(),
+        str(entry.get("label") or "").strip(),
+    )
+
+
+def _snapshot_field_map(snapshot: dict[str, Any], field: str) -> dict[tuple[str, str], str]:
+    values = snapshot.get(field)
+    if not isinstance(values, list):
+        return {}
+    result: dict[tuple[str, str], str] = {}
+    for entry in values:
+        if not isinstance(entry, dict):
+            continue
+        key = _snapshot_entry_key(entry)
+        if not any(key):
+            continue
+        formatted = _format_state_snapshot_entry(entry)
+        if formatted:
+            result[key] = formatted
+    return result
+
+
+def _summarize_state_snapshot_diff(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+) -> list[str]:
+    changes: list[str] = []
+
+    previous_object = str(previous.get("object") or "").strip()
+    current_object = str(current.get("object") or "").strip()
+    if previous_object != current_object and (previous_object or current_object):
+        changes.append(f"object changed: {previous_object or '(empty)'} -> {current_object or '(empty)'}")
+
+    previous_stage = str(previous.get("stage") or "").strip()
+    current_stage = str(current.get("stage") or "").strip()
+    if previous_stage != current_stage and (previous_stage or current_stage):
+        changes.append(f"stage changed: {previous_stage or '(empty)'} -> {current_stage or '(empty)'}")
+
+    for field in (
+        "progress",
+        "resources",
+        "gates",
+        "prompts",
+        "pressures",
+        "changes",
+    ):
+        previous_map = _snapshot_field_map(previous, field)
+        current_map = _snapshot_field_map(current, field)
+        added = [current_map[key] for key in current_map.keys() - previous_map.keys()]
+        removed = [previous_map[key] for key in previous_map.keys() - current_map.keys()]
+        changed = [
+            current_map[key]
+            for key in current_map.keys() & previous_map.keys()
+            if current_map[key] != previous_map[key]
+        ]
+        if added:
+            changes.append(f"{field} added: {' | '.join(sorted(added)[:3])}")
+        if removed:
+            changes.append(f"{field} removed: {' | '.join(sorted(removed)[:3])}")
+        if changed:
+            changes.append(f"{field} updated: {' | '.join(sorted(changed)[:3])}")
+
+    previous_uncertainties = {
+        str(item).strip()
+        for item in previous.get("uncertainties", [])
+        if str(item).strip()
+    }
+    current_uncertainties = {
+        str(item).strip()
+        for item in current.get("uncertainties", [])
+        if str(item).strip()
+    }
+    new_uncertainties = sorted(current_uncertainties - previous_uncertainties)
+    cleared_uncertainties = sorted(previous_uncertainties - current_uncertainties)
+    if new_uncertainties:
+        changes.append(f"uncertainties added: {' | '.join(new_uncertainties[:3])}")
+    if cleared_uncertainties:
+        changes.append(f"uncertainties cleared: {' | '.join(cleared_uncertainties[:3])}")
+
+    return changes
+
+
+def _collect_session_state_snapshots(
+    *,
+    store: TaskStore,
+    source_task: TaskRecord,
+) -> list[dict[str, Any]]:
+    session_id = str(source_task.get("session_id") or "").strip()
+    if not session_id:
+        return []
+
+    tasks, _total = store.list_tasks(session_id=session_id, limit=200, offset=0)
+    reportable_tasks = [
+        task for task in _sort_tasks_chronologically(tasks) if _is_reportable_experience_task(task)
+    ]
+    if len(reportable_tasks) > MAX_SESSION_SNAPSHOT_RUNS:
+        reportable_tasks = reportable_tasks[-MAX_SESSION_SNAPSHOT_RUNS:]
+
+    collected: list[dict[str, Any]] = []
+    for task in reportable_tasks:
+        events = store.list_task_events(str(task["id"]))
+        latest = _latest_state_snapshot_from_events(events)
+        if latest is None:
+            continue
+        (start_step, end_step), snapshot = latest
+        collected.append(
+            {
+                "task_id": str(task["id"]),
+                "created_at": str(task.get("created_at") or ""),
+                "finished_at": str(task.get("finished_at") or ""),
+                "step_count": int(task.get("step_count") or 0),
+                "start_step": start_step,
+                "end_step": end_step,
+                "snapshot": snapshot,
+            }
+        )
+    return collected
+
+
 def _build_step_segments(
     events: list[TaskEventRecord],
     *,
@@ -529,7 +869,11 @@ async def generate_experience_segment_summary(
                 "You summarize a bounded Android app experience segment for a later "
                 "product experience report. Preserve concrete observations, user "
                 "journey, UX issues, errors, dead ends, successful flows, and evidence. "
-                "Do not invent facts."
+                "Do not invent facts. Return JSON with two top-level fields: "
+                "`summary` and `state_snapshot`. `state_snapshot` must remain generic "
+                "and use only these fields: object, stage, progress, resources, gates, "
+                "prompts, pressures, changes, evidence, uncertainties. Do not add "
+                "domain-specific top-level fields."
             ),
         },
         {
@@ -538,8 +882,10 @@ async def generate_experience_segment_summary(
                 f"Original goal: {_truncate_text(source_task.get('input_text'), 1200)}\n"
                 f"Segment: steps {start_step}-{end_step}\n\n"
                 f"Segment trajectory:\n{segment_text}\n\n"
-                "Return a compact structured summary in Chinese unless the original "
-                "content is clearly English."
+                "Return compact JSON in Chinese unless the original content is clearly "
+                "English. Keep `summary` concise. In `state_snapshot`, use only generic "
+                "experience semantics; product-specific nouns may appear only as item "
+                "labels or values."
             ),
         },
     ]
@@ -575,7 +921,12 @@ async def generate_experience_segment_summary(
             raise RuntimeError(model_error_message(exc)) from exc
 
     content = response.choices[0].message.content if response.choices else ""
-    return _truncate_text(content, 2400)
+    if isinstance(content, list):
+        content = "".join(
+            str(part.get("text", "")) if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    return _truncate_text(content, 6000)
 
 
 async def ensure_experience_segment_summaries(
@@ -622,11 +973,17 @@ async def ensure_experience_segment_summaries(
                 summaries.append(payload)
                 continue
 
-            summary = await generate_experience_segment_summary(
+            summary_content = await generate_experience_segment_summary(
                 source_task=source_task,
                 start_step=key[0],
                 end_step=key[1],
                 segment_text=str(segment["text"]),
+            )
+            parsed = _parse_segment_summary_artifact(summary_content)
+            summary = (
+                parsed["summary"]
+                if parsed is not None
+                else _truncate_text(summary_content, 2400)
             )
             payload = {
                 "version": SEGMENT_SUMMARY_VERSION,
@@ -636,6 +993,8 @@ async def ensure_experience_segment_summaries(
                 "summary": summary,
                 "screenshot_refs": segment.get("screenshot_refs", []),
             }
+            if parsed is not None and parsed.get("state_snapshot") is not None:
+                payload["state_snapshot"] = parsed["state_snapshot"]
             persisted_event, _created = await asyncio.to_thread(
                 store.append_event_if_missing_by_payload_fields,
                 task_id=str(source_task["id"]),
@@ -645,8 +1004,18 @@ async def ensure_experience_segment_summaries(
                 payload_fields=match_fields,
             )
             payload = dict(persisted_event.get("payload") or payload)
-        elif "screenshot_refs" not in payload:
-            payload = {**payload, "screenshot_refs": segment.get("screenshot_refs", [])}
+        else:
+            updates: dict[str, Any] = {}
+            if "screenshot_refs" not in payload:
+                updates["screenshot_refs"] = segment.get("screenshot_refs", [])
+            if "state_snapshot" in payload:
+                normalized_snapshot = _normalize_state_snapshot(
+                    payload.get("state_snapshot")
+                )
+                if normalized_snapshot is not None:
+                    updates["state_snapshot"] = normalized_snapshot
+            if updates:
+                payload = {**payload, **updates}
         summaries.append(payload)
 
     return summaries
@@ -695,6 +1064,56 @@ def build_experience_report_context(
         )
         for index, (step, summary) in enumerate(observed_item_summaries, start=1):
             lines.append(f"- item {index} (step {step}): {summary}")
+
+    segment_state_snapshots = [
+        (
+            int(payload.get("start_step") or 0),
+            int(payload.get("end_step") or 0),
+            snapshot,
+        )
+        for payload in segment_summaries
+        if (snapshot := _normalize_state_snapshot(payload.get("state_snapshot")))
+        is not None
+    ]
+    if segment_state_snapshots:
+        lines.append("# Structured State Snapshots")
+        lines.append(
+            "These generic state snapshots were extracted from bounded experience segments."
+        )
+        for start_step, end_step, snapshot in segment_state_snapshots:
+            _append_state_snapshot_lines(
+                lines,
+                snapshot,
+                title=f"## Snapshot steps {start_step}-{end_step}",
+            )
+
+    session_snapshots = _collect_session_state_snapshots(
+        store=store,
+        source_task=source_task,
+    )
+    if len(session_snapshots) > 1:
+        lines.append("# Cross-Run State Snapshot Timeline")
+        lines.append(
+            "These snapshots summarize how generic long-term state changed across reportable experience runs in the same chat session."
+        )
+        previous_snapshot: dict[str, Any] | None = None
+        for index, item in enumerate(session_snapshots, start=1):
+            title = (
+                f"## Run {index} "
+                f"(task {item['task_id']}, steps {item['start_step']}-{item['end_step']}, total_steps={item['step_count']})"
+            )
+            _append_state_snapshot_lines(
+                lines,
+                item["snapshot"],
+                title=title,
+            )
+            if previous_snapshot is not None:
+                diffs = _summarize_state_snapshot_diff(previous_snapshot, item["snapshot"])
+                if diffs:
+                    lines.append("- diff_from_previous:")
+                    for diff in diffs[:8]:
+                        lines.append(f"  - {diff}")
+            previous_snapshot = item["snapshot"]
 
     if segment_summaries:
         lines.extend(

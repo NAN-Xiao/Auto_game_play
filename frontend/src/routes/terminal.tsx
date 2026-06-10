@@ -6,7 +6,7 @@ import {
   Loader2,
   MonitorSmartphone,
   RefreshCw,
-  Terminal,
+  SquareTerminal,
   Trash2,
 } from 'lucide-react';
 
@@ -379,7 +379,7 @@ export function TerminalRouteComponent() {
         <div>
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-sky-100 text-sky-600 dark:bg-sky-950/40 dark:text-sky-300">
-              <Terminal className="h-5 w-5" />
+              <SquareTerminal className="h-5 w-5" />
             </div>
             <div>
               <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">

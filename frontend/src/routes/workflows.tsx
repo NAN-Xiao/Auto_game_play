@@ -19,7 +19,14 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Plus, Edit, Trash2, Loader2, ArrowUp, ArrowDown } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Loader2,
+  NotebookPen,
+  Trash2,
+  Workflow as WorkflowIcon,
+} from 'lucide-react';
 import { useTranslation } from '../lib/i18n-context';
 
 export const Route = createFileRoute('/workflows')({
@@ -308,7 +315,7 @@ export function WorkflowsComponent() {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">{t.workflows.title}</h1>
         <Button onClick={handleCreate}>
-          <Plus className="w-4 h-4 mr-2" />
+          <WorkflowIcon className="w-4 h-4 mr-2" />
           {t.workflows.createNew}
         </Button>
       </div>
@@ -371,7 +378,7 @@ export function WorkflowsComponent() {
                     size="sm"
                     onClick={() => handleEdit(workflow)}
                   >
-                    <Edit className="w-3 h-3 mr-1" />
+                    <NotebookPen className="w-3 h-3 mr-1" />
                     {t.common.edit}
                   </Button>
                   <Button
@@ -458,7 +465,7 @@ export function WorkflowsComponent() {
                               onClick={() => insertStepAfter(index)}
                               title={t.workflows.addStep}
                             >
-                              <Plus className="w-3 h-3" />
+                              <WorkflowIcon className="w-3 h-3" />
                             </Button>
                             <Button
                               variant="ghost"

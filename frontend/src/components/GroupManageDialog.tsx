@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  FolderOpen,
-  Plus,
-  Edit,
+  FolderPlus,
+  Folders,
   Trash2,
   GripVertical,
   Loader2,
   AlertCircle,
+  NotebookPen,
 } from 'lucide-react';
 import {
   Dialog,
@@ -267,7 +267,7 @@ export function GroupManageDialog({
                     {group.is_default && <div className="w-4" />}
 
                     {/* Group icon and name */}
-                    <FolderOpen className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    <Folders className="w-4 h-4 text-slate-400 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
                       <span className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate block">
                         {group.is_default
@@ -296,7 +296,7 @@ export function GroupManageDialog({
                           setEditingName(group.name);
                         }}
                       >
-                        <Edit className="w-3.5 h-3.5" />
+                        <NotebookPen className="w-3.5 h-3.5" />
                       </Button>
                       {!group.is_default && (
                         <Button
@@ -318,7 +318,7 @@ export function GroupManageDialog({
                   className="w-full justify-start gap-2"
                   onClick={() => setShowCreateDialog(true)}
                 >
-                  <Plus className="w-4 h-4" />
+                  <FolderPlus className="w-4 h-4" />
                   {t.deviceGroups?.createNew || '新建分组'}
                 </Button>
               </div>

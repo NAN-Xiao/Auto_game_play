@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import {
-  Edit,
   Loader2,
-  Server,
-  Smartphone,
+  MonitorSmartphone,
+  ServerCog,
   Trash2,
+  Usb,
+  UserRoundPen,
   Wifi,
+  WifiCog,
   WifiOff,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -238,7 +240,7 @@ export function DeviceCard({
           {/* Device icon and info */}
           <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5">
             <div className="flex items-center gap-2">
-              <Smartphone
+              <MonitorSmartphone
                 className={`w-4 h-4 flex-shrink-0 ${
                   isActive
                     ? 'text-[#1d9bf0]'
@@ -262,7 +264,7 @@ export function DeviceCard({
                     onClick={handleEditClick}
                     className="h-5 w-5 text-slate-400 hover:text-[#1d9bf0] opacity-0 group-hover:opacity-100 transition-opacity"
                   >
-                    <Edit className="w-3 h-3" />
+                    <UserRoundPen className="w-3 h-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -291,7 +293,7 @@ export function DeviceCard({
                     variant="outline"
                     className="text-xs border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-400"
                   >
-                    <Server className="w-2.5 h-2.5 mr-1" />
+                    <ServerCog className="w-2.5 h-2.5 mr-1" />
                     {t.deviceCard.remote || 'Remote'}
                   </Badge>
                 );
@@ -301,7 +303,7 @@ export function DeviceCard({
                     variant="outline"
                     className="text-xs border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-400"
                   >
-                    <Wifi className="w-2.5 h-2.5 mr-1" />
+                    <WifiCog className="w-2.5 h-2.5 mr-1" />
                     {t.deviceCard.wifi || 'WiFi'}
                   </Badge>
                 );
@@ -311,6 +313,7 @@ export function DeviceCard({
                     variant="outline"
                     className="text-xs border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-400"
                   >
+                    <Usb className="w-2.5 h-2.5 mr-1" />
                     USB
                   </Badge>
                 );
@@ -334,7 +337,7 @@ export function DeviceCard({
                     {loading ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <Wifi className="w-3.5 h-3.5" />
+                      <WifiCog className="w-3.5 h-3.5" />
                     )}
                   </Button>
                 </TooltipTrigger>

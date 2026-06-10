@@ -11,16 +11,16 @@ import {
   CheckCircle2,
   Send,
   RotateCcw,
-  Layers,
-  MessageSquare,
-  Wrench,
+  BotMessageSquare,
   ChevronDown,
   ChevronUp,
-  History,
-  ListChecks,
+  HandHelping,
   Loader2,
+  MonitorCog,
+  NotebookTabs,
+  PanelsTopLeft,
   Square,
-  Hand,
+  Workflow as WorkflowIcon,
 } from 'lucide-react';
 import type { Workflow, HistoryRecordResponse } from '../api';
 import {
@@ -798,7 +798,7 @@ export function ChatKitPanel({
         <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-purple-500/10">
-              <Layers className="h-5 w-5 text-purple-500" />
+              <PanelsTopLeft className="h-5 w-5 text-purple-500" />
             </div>
             <div>
               <h2 className="font-bold text-slate-900 dark:text-slate-100">
@@ -836,7 +836,7 @@ export function ChatKitPanel({
                   className="h-8 w-8 rounded-full text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                   title={t.history?.title || 'History'}
                 >
-                  <History className="h-4 w-4" />
+                  <NotebookTabs className="h-4 w-4" />
                 </Button>
               </PopoverTrigger>
 
@@ -872,7 +872,7 @@ export function ChatKitPanel({
                       ))
                     ) : (
                       <div className="text-center py-8">
-                        <History className="h-12 w-12 text-slate-300 dark:text-slate-700 mx-auto mb-3" />
+                        <NotebookTabs className="h-12 w-12 text-slate-300 dark:text-slate-700 mx-auto mb-3" />
                         <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
                           {t.history?.noHistory || 'No history yet'}
                         </p>
@@ -909,7 +909,7 @@ export function ChatKitPanel({
         {/* Interaction waiting indicator */}
         {waitingForUserInteraction && (
           <div className="mx-4 mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl text-sm text-blue-600 dark:text-blue-400 flex items-center gap-2">
-            <Hand className="w-4 h-4 flex-shrink-0" />
+            <HandHelping className="w-4 h-4 flex-shrink-0" />
             <span className="whitespace-pre-line">
               {interactionPrompt || '等待用户输入...'}
             </span>
@@ -927,7 +927,7 @@ export function ChatKitPanel({
               {messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center py-12">
                   <div className="flex h-16 w-16 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-900/30 mb-4">
-                    <Layers className="h-8 w-8 text-purple-500" />
+                    <PanelsTopLeft className="h-8 w-8 text-purple-500" />
                   </div>
                   <p className="font-medium text-slate-900 dark:text-slate-100">
                     {t.chatkit?.title || '分层代理模式'}
@@ -980,9 +980,9 @@ export function ChatKitPanel({
                                       }`}
                                     >
                                       {step.type === 'tool_call' ? (
-                                        <Wrench className="w-3 h-3" />
+                                        <MonitorCog className="w-3 h-3" />
                                       ) : (
-                                        <MessageSquare className="w-3 h-3" />
+                                        <BotMessageSquare className="w-3 h-3" />
                                       )}
                                     </div>
                                     <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -1166,7 +1166,7 @@ export function ChatKitPanel({
                       size="icon"
                       className="h-10 w-10 flex-shrink-0"
                     >
-                      <ListChecks className="w-4 h-4" />
+                      <WorkflowIcon className="w-4 h-4" />
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent align="start" className="w-72 p-3">

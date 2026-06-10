@@ -4,15 +4,16 @@ import {
   RotateCcw,
   CheckCircle2,
   AlertCircle,
-  Sparkles,
-  History,
+  Bot,
+  NotebookTabs,
   ListChecks,
   Loader2,
   Square,
   ImagePlus,
   X,
-  Hand,
+  HandHelping,
   ClipboardList,
+  Workflow as WorkflowIcon,
 } from 'lucide-react';
 import { DeviceMonitor } from './DeviceMonitor';
 import type {
@@ -969,7 +970,7 @@ export function DevicePanel({
         <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1d9bf0]/10">
-              <Sparkles className="h-5 w-5 text-[#1d9bf0]" />
+              <Bot className="h-5 w-5 text-[#1d9bf0]" />
             </div>
             <div className="group">
               <div className="flex items-center gap-1">
@@ -1004,7 +1005,7 @@ export function DevicePanel({
                   className="h-8 w-8 rounded-full text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                   title={t.history.title}
                 >
-                  <History className="h-4 w-4" />
+                  <NotebookTabs className="h-4 w-4" />
                 </Button>
               </PopoverTrigger>
 
@@ -1040,7 +1041,7 @@ export function DevicePanel({
                       ))
                     ) : (
                       <div className="text-center py-8">
-                        <History className="h-12 w-12 text-slate-300 dark:text-slate-700 mx-auto mb-3" />
+                        <NotebookTabs className="h-12 w-12 text-slate-300 dark:text-slate-700 mx-auto mb-3" />
                         <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
                           {t.history.noHistory}
                         </p>
@@ -1108,7 +1109,7 @@ export function DevicePanel({
               {messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center min-h-[calc(100%-1rem)]">
                   <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 mb-4">
-                    <Sparkles className="h-8 w-8 text-slate-400" />
+                    <Bot className="h-8 w-8 text-slate-400" />
                   </div>
                   <p className="font-medium text-slate-900 dark:text-slate-100">
                     {t.devicePanel.readyToHelp}
@@ -1181,7 +1182,7 @@ export function DevicePanel({
                                     <div className="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3">
                                       <div className="flex items-center gap-2 mb-2">
                                         <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#1d9bf0]/10">
-                                          <Sparkles className="h-3 w-3 text-[#1d9bf0]" />
+                                          <Bot className="h-3 w-3 text-[#1d9bf0]" />
                                         </div>
                                         <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
                                           {getAnalysisTitle(
@@ -1368,7 +1369,7 @@ export function DevicePanel({
                           <div className="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3">
                             <div className="flex items-center gap-2 mb-2">
                               <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#1d9bf0]/10">
-                                <Sparkles className="h-3 w-3 text-[#1d9bf0] animate-pulse" />
+                                <Bot className="h-3 w-3 text-[#1d9bf0] animate-pulse" />
                               </div>
                               <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
                                 正在综合分析...
@@ -1520,7 +1521,7 @@ export function DevicePanel({
           )}
           {waitingForUserInteraction && (
             <div className="mb-3 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
-              <Hand className="h-4 w-4" />
+              <HandHelping className="h-4 w-4" />
               <span className="whitespace-pre-line">
                 {interactionPrompt || '等待用户输入...'}
               </span>
@@ -1601,7 +1602,7 @@ export function DevicePanel({
                       size="icon"
                       className="h-10 w-10 flex-shrink-0"
                     >
-                      <ListChecks className="w-4 h-4" />
+                      <WorkflowIcon className="w-4 h-4" />
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent align="start" className="w-72 p-3">

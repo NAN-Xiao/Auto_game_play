@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, AlertCircle, Trash2 } from 'lucide-react';
+import { AlertCircle, BadgeCheck, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -89,7 +89,7 @@ export function HistoryItemCard({
             >
               {item.success ? (
                 <>
-                  <CheckCircle2 className="w-3 h-3 mr-1" />
+                  <BadgeCheck className="w-3 h-3 mr-1" />
                   {t.history.success}
                 </>
               ) : (

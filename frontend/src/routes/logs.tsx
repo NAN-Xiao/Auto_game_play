@@ -1,6 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useState, useEffect, useCallback } from 'react';
-import { FileText, FolderOpen, RefreshCw, AlertCircle } from 'lucide-react';
+import {
+  AlertCircle,
+  FolderTree,
+  Logs,
+  RefreshCw,
+  ScrollText,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '../lib/i18n-context';
 
@@ -141,7 +147,7 @@ export function LogsComponent() {
             </Button>
           </div>
           <Button variant="outline" className="w-full" onClick={openLogsFolder}>
-            <FolderOpen className="w-4 h-4 mr-2" />
+            <FolderTree className="w-4 h-4 mr-2" />
             {t.logs.openFolder}
           </Button>
         </div>
@@ -167,7 +173,7 @@ export function LogsComponent() {
                     {file.isError ? (
                       <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                     ) : (
-                      <FileText className="w-5 h-5 text-slate-400 flex-shrink-0 mt-0.5" />
+                      <ScrollText className="w-5 h-5 text-slate-400 flex-shrink-0 mt-0.5" />
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-sm truncate">
@@ -212,7 +218,7 @@ export function LogsComponent() {
         ) : (
           <div className="flex-1 flex items-center justify-center text-slate-500">
             <div className="text-center">
-              <FileText className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+              <Logs className="w-12 h-12 mx-auto mb-4 text-slate-300" />
               <p>{t.logs.selectLog}</p>
             </div>
           </div>

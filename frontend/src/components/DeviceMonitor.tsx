@@ -9,16 +9,15 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { useTranslation } from '../lib/i18n-context';
 import {
-  Video,
-  Image as ImageIcon,
-  MonitorPlay,
+  AlertCircle,
   ChevronLeft,
   ChevronRight,
   Fingerprint,
   ArrowUpDown,
-  AlertCircle,
   CheckCircle2,
   Loader2,
+  MonitorPlay,
+  ScanSearch,
   X,
 } from 'lucide-react';
 import {
@@ -241,7 +240,7 @@ export function DeviceMonitor({
                       : 'text-foreground hover:bg-accent hover:text-accent-foreground'
                   }`}
                 >
-                  <Video className="w-3 h-3 mr-1" />
+                  <MonitorPlay className="w-3 h-3 mr-1" />
                   {t.devicePanel?.video || 'Video'}
                 </Button>
               )}
@@ -255,7 +254,7 @@ export function DeviceMonitor({
                     : 'text-foreground hover:bg-accent hover:text-accent-foreground'
                 }`}
               >
-                <ImageIcon className="w-3 h-3 mr-1" />
+                <ScanSearch className="w-3 h-3 mr-1" />
                 {t.devicePanel?.image || 'Image'}
               </Button>
             </div>
@@ -299,7 +298,7 @@ export function DeviceMonitor({
           )}
           {displayMode === 'screenshot' && (
             <>
-              <ImageIcon className="w-3 h-3 mr-1" />
+              <ScanSearch className="w-3 h-3 mr-1" />
               {t.devicePanel?.imageRefresh || 'Screenshot'}
             </>
           )}

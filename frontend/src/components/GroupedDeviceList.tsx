@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   ChevronDown,
   ChevronRight,
-  FolderOpen,
+  Folders,
+  FolderTree,
   GripVertical,
 } from 'lucide-react';
 import { DeviceCard } from './DeviceCard';
@@ -146,7 +147,7 @@ export function GroupedDeviceList({
               ) : (
                 <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />
               )}
-              <FolderOpen className="w-4 h-4 text-slate-400 flex-shrink-0" />
+              <Folders className="w-4 h-4 text-slate-400 flex-shrink-0" />
               <span className="flex-1 text-sm font-medium text-slate-700 dark:text-slate-300 truncate">
                 {group.is_default
                   ? t.deviceGroups?.defaultGroup || 'Default'
@@ -199,7 +200,7 @@ export function GroupedDeviceList({
                                   : ''
                               }
                             >
-                              <FolderOpen className="w-4 h-4 mr-2" />
+                              <FolderTree className="w-4 h-4 mr-2" />
                               {targetGroup.name}
                               {targetGroup.id === device.group_id && (
                                 <span className="ml-auto text-xs text-slate-400">

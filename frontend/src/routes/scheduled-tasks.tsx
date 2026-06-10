@@ -46,14 +46,14 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-  Plus,
+  AlarmClockCheck,
+  AlertCircle,
+  BadgeCheck,
+  BadgeInfo,
+  CalendarClock,
   Edit,
   Trash2,
   Loader2,
-  Clock,
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
 } from 'lucide-react';
 import { useTranslation } from '../lib/i18n-context';
 
@@ -292,7 +292,7 @@ export function ScheduledTasksComponent() {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">{t.scheduledTasks.title}</h1>
         <Button onClick={handleCreate}>
-          <Plus className="w-4 h-4 mr-2" />
+          <AlarmClockCheck className="w-4 h-4 mr-2" />
           {t.scheduledTasks.create}
         </Button>
       </div>
@@ -374,7 +374,7 @@ export function ScheduledTasksComponent() {
 
                   <div className="text-sm">
                     <Badge variant="outline" className="font-mono">
-                      <Clock className="w-3 h-3 mr-1" />
+                      <CalendarClock className="w-3 h-3 mr-1" />
                       {task.cron_expression}
                     </Badge>
                   </div>
@@ -387,11 +387,11 @@ export function ScheduledTasksComponent() {
                     {task.last_run_time ? (
                       <>
                         {getLastRunStatus(task) === 'success' ? (
-                          <CheckCircle className="w-4 h-4 text-green-500" />
+                          <BadgeCheck className="w-4 h-4 text-green-500" />
                         ) : getLastRunStatus(task) === 'partial' ? (
-                          <AlertTriangle className="w-4 h-4 text-amber-500" />
+                          <BadgeInfo className="w-4 h-4 text-amber-500" />
                         ) : (
-                          <XCircle className="w-4 h-4 text-red-500" />
+                          <AlertCircle className="w-4 h-4 text-red-500" />
                         )}
                         <span title={task.last_run_message || undefined}>
                           {formatTime(task.last_run_time)}

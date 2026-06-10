@@ -209,6 +209,88 @@ def test_segment_summaries_persist_screenshot_refs_and_report_uses_ref_images(
     store.close()
 
 
+def test_segment_summaries_persist_generic_state_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    source_task = _create_source_task_with_steps(store, step_count=30)
+
+    async def fake_generate_experience_segment_summary(
+        *,
+        source_task,
+        start_step,
+        end_step,
+        segment_text,
+    ):
+        _ = (source_task, start_step, end_step, segment_text)
+        return """
+        {
+          "summary": "阶段总结：完成了前期引导并出现资源消耗。",
+          "state_snapshot": {
+            "object": "新手流程",
+            "stage": "前期引导",
+            "progress": [
+              {"label": "完成登录并进入主界面", "status": "done"}
+            ],
+            "resources": [
+              {"label": "体力", "value": "12/20", "change": "-8"}
+            ],
+            "gates": [
+              {"label": "主线进度限制", "detail": "需要继续完成引导"}
+            ],
+            "prompts": [
+              {"label": "限时礼包弹窗", "type": "monetization"}
+            ],
+            "pressures": [
+              {"label": "任务推进压力上升", "confidence": 0.75}
+            ],
+            "changes": [
+              {"label": "资源开始持续消耗"}
+            ],
+            "evidence": [
+              {"label": "任务按钮高亮", "detail": "主界面连续引导"}
+            ],
+            "uncertainties": ["长期养成节奏尚未确认"]
+          }
+        }
+        """
+
+    monkeypatch.setattr(
+        experience_report_module,
+        "generate_experience_segment_summary",
+        fake_generate_experience_segment_summary,
+    )
+
+    summaries = asyncio.run(
+        ensure_experience_segment_summaries(
+            store=store,
+            source_task=source_task,
+            segment_step_size=30,
+        )
+    )
+
+    assert summaries[0]["summary"] == "阶段总结：完成了前期引导并出现资源消耗。"
+    assert summaries[0]["state_snapshot"]["object"] == "新手流程"
+    assert summaries[0]["state_snapshot"]["stage"] == "前期引导"
+    assert summaries[0]["state_snapshot"]["resources"] == [
+        {"label": "体力", "value": "12/20", "change": "-8"}
+    ]
+    assert summaries[0]["state_snapshot"]["uncertainties"] == ["长期养成节奏尚未确认"]
+
+    events = store.list_task_events(source_task["id"])
+    payload = next(
+        event["payload"]
+        for event in events
+        if event["event_type"] == "experience_segment_summary"
+    )
+    assert payload["state_snapshot"]["prompts"] == [
+        {"type": "monetization", "label": "限时礼包弹窗"}
+    ]
+
+    store.close()
+
+
 def test_concurrent_segment_summary_creation_does_not_duplicate_events(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -346,5 +428,145 @@ def test_experience_report_context_keeps_object_summaries_with_segments(
     assert "特朗普建议伊朗回到谈判桌" in context.text
     assert "# Segment Summaries" in context.text
     assert "cached compressed trajectory" in context.text
+
+    store.close()
+
+
+def test_experience_report_context_includes_structured_state_snapshots(
+    tmp_path: Path,
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    source_task = _create_source_task_with_steps(store, step_count=30)
+    store.append_event(
+        task_id=source_task["id"],
+        event_type="experience_segment_summary",
+        role="system",
+        payload={
+            "version": "v1",
+            "segment_step_size": 30,
+            "start_step": 1,
+            "end_step": 30,
+            "summary": "cached compressed trajectory",
+            "state_snapshot": {
+                "object": "主流程",
+                "stage": "新手阶段",
+                "progress": [{"label": "已进入主界面", "status": "done"}],
+                "resources": [{"label": "金币", "value": "1000", "change": "+200"}],
+                "gates": [{"label": "主线任务门槛"}],
+                "pressures": [{"label": "连续任务推进行为明显"}],
+                "uncertainties": ["付费压力尚未确认"],
+            },
+        },
+    )
+
+    context = build_experience_report_context(store=store, source_task=source_task)
+
+    assert "# Structured State Snapshots" in context.text
+    assert "## Snapshot steps 1-30" in context.text
+    assert "- object: 主流程" in context.text
+    assert "- stage: 新手阶段" in context.text
+    assert "label=金币; value=1000; change=+200" in context.text
+    assert "付费压力尚未确认" in context.text
+
+    store.close()
+
+
+def test_experience_report_context_includes_cross_run_snapshot_timeline(
+    tmp_path: Path,
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    session = store.create_session(
+        kind="chat",
+        mode="classic",
+        device_id="device-1",
+        device_serial="serial-1",
+        session_id="session-1",
+    )
+    first_task = store.create_task_run(
+        source="chat",
+        executor_key="classic_chat",
+        session_id=session["id"],
+        device_id="device-1",
+        device_serial="serial-1",
+        input_text="第一次体验",
+    )
+    store.append_event(
+        task_id=first_task["id"],
+        event_type="experience_segment_summary",
+        role="system",
+        payload={
+            "version": "v1",
+            "segment_step_size": 30,
+            "start_step": 1,
+            "end_step": 30,
+            "summary": "first summary",
+            "state_snapshot": {
+                "object": "主流程",
+                "stage": "新手阶段",
+                "progress": [{"label": "进入主界面", "status": "done"}],
+                "resources": [{"label": "金币", "value": "100"}],
+                "gates": [{"label": "主线任务要求"}],
+            },
+        },
+    )
+    store.update_task_terminal(
+        task_id=first_task["id"],
+        status=TaskStatus.CANCELLED.value,
+        final_message="stopped",
+        error_message="stopped",
+        stop_reason="user_stopped",
+        step_count=30,
+    )
+    first_task = store.get_task(first_task["id"]) or first_task
+
+    second_task = store.create_task_run(
+        source="chat",
+        executor_key="classic_chat",
+        session_id=session["id"],
+        device_id="device-1",
+        device_serial="serial-1",
+        input_text="第二次体验",
+    )
+    store.append_event(
+        task_id=second_task["id"],
+        event_type="experience_segment_summary",
+        role="system",
+        payload={
+            "version": "v1",
+            "segment_step_size": 30,
+            "start_step": 31,
+            "end_step": 60,
+            "summary": "second summary",
+            "state_snapshot": {
+                "object": "主流程",
+                "stage": "养成阶段",
+                "progress": [
+                    {"label": "进入主界面", "status": "done"},
+                    {"label": "解锁商店", "status": "done"},
+                ],
+                "resources": [{"label": "金币", "value": "40", "change": "-60"}],
+                "gates": [{"label": "等级门槛"}],
+                "pressures": [{"label": "资源消耗压力上升"}],
+            },
+        },
+    )
+    store.update_task_terminal(
+        task_id=second_task["id"],
+        status=TaskStatus.CANCELLED.value,
+        final_message="stopped",
+        error_message="stopped",
+        stop_reason="user_stopped",
+        step_count=60,
+    )
+    second_task = store.get_task(second_task["id"]) or second_task
+
+    context = build_experience_report_context(store=store, source_task=second_task)
+
+    assert "# Cross-Run State Snapshot Timeline" in context.text
+    assert f"## Run 1 (task {first_task['id']}, steps 1-30, total_steps=30)" in context.text
+    assert f"## Run 2 (task {second_task['id']}, steps 31-60, total_steps=60)" in context.text
+    assert "stage changed: 新手阶段 -> 养成阶段" in context.text
+    assert "progress added: label=解锁商店; status=done" in context.text
+    assert "resources updated: label=金币; value=40; change=-60" in context.text
 
     store.close()

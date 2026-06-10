@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { Outlet, createRootRoute } from '@tanstack/react-router';
-import { TanStackRouterDevtools } from '@tanstack/react-router-devtools';
 import { Separator } from '@/components/ui/separator';
-import { Globe } from 'lucide-react';
+import { Languages } from 'lucide-react';
 import { useLocale } from '../lib/i18n-context';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { NavigationSidebar } from '../components/NavigationSidebar';
@@ -20,21 +19,18 @@ export function Footer() {
   };
 
   return (
-    <footer className="mt-auto border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
-      <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-center gap-2 text-sm">
-        <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+    <footer className="mt-auto border-t app-divider bg-card/86 backdrop-blur-xl">
+      <div className="mx-auto flex max-w-7xl items-center justify-center gap-2 px-5 py-3 text-sm">
+        <div className="flex items-center gap-2 text-muted-foreground">
           <button
             onClick={toggleLocale}
-            className="hover:text-[#1d9bf0] transition-colors flex items-center gap-1"
+            className="flex items-center gap-1 rounded-full px-2 py-1 transition-colors hover:text-primary"
             title="Switch language"
           >
-            <Globe className="w-4 h-4" />
+            <Languages className="w-4 h-4" />
             {localeName}
           </button>
-          <Separator
-            orientation="vertical"
-            className="h-4 bg-slate-200 dark:bg-slate-700"
-          />
+          <Separator orientation="vertical" className="h-4 bg-border/90" />
           <ThemeToggle />
         </div>
       </div>
@@ -45,7 +41,7 @@ export function Footer() {
 export function RootComponent() {
   return (
     <DeviceProvider>
-      <div className="h-screen flex flex-col overflow-hidden">
+      <div className="h-screen flex flex-col overflow-hidden bg-background">
         <div className="flex-1 flex overflow-hidden">
           <NavigationSidebar />
           <div className="flex-1 flex flex-col overflow-hidden">
@@ -55,9 +51,6 @@ export function RootComponent() {
             <Footer />
           </div>
         </div>
-        {__DEVTOOLS_ENABLED__ && (
-          <TanStackRouterDevtools position="bottom-right" />
-        )}
       </div>
     </DeviceProvider>
   );
