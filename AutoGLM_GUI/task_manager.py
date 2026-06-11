@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from AutoGLM_GUI.config import MemoryPolicy
+from AutoGLM_GUI.experience_strategy import select_strategy
 from AutoGLM_GUI.logger import logger
 from AutoGLM_GUI.metrics import record_trace_latency_metrics
 from AutoGLM_GUI.task_store import (
@@ -730,6 +731,10 @@ class TaskManager:
             semantic_context
         )
         memory_policy = str(plan.get("memory_policy") or "hybrid")
+        strategy = select_strategy(memory_policy, original_goal)
+        strategy_rules = strategy.enrich_execution_rules(plan, original_goal)
+        strategy_state_prompt = strategy.build_state_tracking_prompt(plan)
+        strategy_checkpoint = strategy.build_state_checkpoint_summary(plan)
         observation_window_description = (
             TaskManager._build_observation_window_description(
                 observation_window_screenshot_count=observation_window_screenshot_count,
@@ -765,6 +770,21 @@ class TaskManager:
             "",
             "记忆策略：",
             *TaskManager._build_memory_policy_execution_rules(memory_policy),
+            *(
+                ["", "场景策略：", *strategy_rules]
+                if strategy_rules
+                else []
+            ),
+            *(
+                ["", f"状态追踪要求：{strategy_state_prompt}"]
+                if strategy_state_prompt
+                else []
+            ),
+            *(
+                ["", f"阶段记忆要求：{strategy_checkpoint}"]
+                if strategy_checkpoint
+                else []
+            ),
             "",
             "语义拆解协议：",
             "- 先从原始委托中判断观察对象、执行阶段、证据要求、切换条件和最终产物；观察对象可以是视频、商品、帖子、页面、关卡、任务、流程阶段或任意用户语义对象。",

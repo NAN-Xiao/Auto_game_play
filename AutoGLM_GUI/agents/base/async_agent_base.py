@@ -9,6 +9,7 @@
 import asyncio
 import copy
 import json
+import re
 import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
@@ -134,6 +135,7 @@ class AsyncAgentBase(ABC):
         self._strict_finish_recovery_pending = False
         self._strict_finish_recovery_attempts = 0
         self._active_task: str | None = None
+        self._state_checkpoints: list[str] = []
 
     # ==================== 子类必须实现 ====================
 
@@ -355,11 +357,81 @@ class AsyncAgentBase(ABC):
             return STATEFUL_HISTORY_MESSAGE_LIMIT
         return None
 
+    _CHECKPOINT_PATTERN = re.compile(r"【阶段小结】(.+?)(?:\n|$)")
+    _CHECKPOINT_SECTION_MARKER = "\n\n** 阶段进度记忆 **\n"
+    _MAX_CHECKPOINTS = 20
+
+    def _extract_checkpoints_from_messages(
+        self, messages: list[dict[str, Any]]
+    ) -> list[str]:
+        """Extract 【阶段小结】 lines from assistant messages."""
+        checkpoints: list[str] = []
+        for msg in messages:
+            if msg.get("role") != "assistant":
+                continue
+            content = msg.get("content", "")
+            if not isinstance(content, str):
+                continue
+            for match in self._CHECKPOINT_PATTERN.finditer(content):
+                checkpoint = match.group(1).strip()
+                if checkpoint and checkpoint not in checkpoints:
+                    checkpoints.append(checkpoint)
+        return checkpoints
+
+    def _inject_checkpoints_into_system_message(self) -> None:
+        """Inject accumulated state checkpoints into the system message."""
+        if not self._state_checkpoints:
+            return
+        if not self._context:
+            return
+        system_msg = self._context[0]
+        if system_msg.get("role") != "system":
+            return
+
+        base_content = system_msg.get("content", "")
+        if not isinstance(base_content, str):
+            return
+
+        # Strip any previously injected checkpoint section
+        marker = self._CHECKPOINT_SECTION_MARKER
+        marker_idx = base_content.find(marker)
+        if marker_idx != -1:
+            base_content = base_content[:marker_idx]
+
+        # Append current checkpoints
+        checkpoint_lines = [
+            f"{i+1}. {cp}" for i, cp in enumerate(self._state_checkpoints)
+        ]
+        checkpoint_section = (
+            f"{marker}"
+            + "\n".join(checkpoint_lines)
+        )
+        self._context[0] = {
+            **system_msg,
+            "content": base_content + checkpoint_section,
+        }
+
     def _trim_context_history(self) -> None:
         limit = self._history_message_limit_for_policy()
         if limit is None or len(self._context) <= limit + 1:
             return
+
+        # Extract checkpoints from messages about to be dropped
+        messages_to_drop = self._context[1:-limit]
+        new_checkpoints = self._extract_checkpoints_from_messages(messages_to_drop)
+        if new_checkpoints:
+            self._state_checkpoints.extend(new_checkpoints)
+            # Keep only the most recent checkpoints
+            if len(self._state_checkpoints) > self._MAX_CHECKPOINTS:
+                self._state_checkpoints = self._state_checkpoints[
+                    -self._MAX_CHECKPOINTS:
+                ]
+
         self._context = [self._context[0], *self._context[-limit:]]
+
+        # Re-inject checkpoints into system message
+        if self._state_checkpoints:
+            self._inject_checkpoints_into_system_message()
 
     def _prepare_context_for_model_turn(self) -> bool:
         if self._uses_stateless_observation_turns():
@@ -910,6 +982,7 @@ class AsyncAgentBase(ABC):
         self._active_task = None
         self._strict_finish_recovery_pending = False
         self._strict_finish_recovery_attempts = 0
+        self._state_checkpoints = []
         self._is_running = False
         self._cancel_event.clear()
 
