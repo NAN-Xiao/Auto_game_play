@@ -791,7 +791,7 @@ export function ChatKitPanel({
   };
 
   return (
-    <div className="flex-1 flex gap-4 p-4 items-stretch justify-center min-h-0">
+    <div className="flex flex-1 min-h-0 w-full items-stretch gap-4">
       {/* Chat Area with Execution Steps */}
       <Card className="flex-1 flex flex-col min-h-0 max-w-2xl overflow-hidden">
         {/* Header */}

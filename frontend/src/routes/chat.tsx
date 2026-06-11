@@ -1137,70 +1137,79 @@ export function ChatComponent() {
       />
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-h-0 relative">
-        {/* Mode Toggle - Floating Capsule */}
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">
-          <div className="flex items-center gap-0.5 bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm rounded-full p-1 shadow-lg border border-slate-200 dark:border-slate-700">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => setChatMode('classic')}
-                  className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                    chatMode === 'classic'
-                      ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm'
-                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  <MonitorSmartphone className="w-4 h-4" />
-                  {t.chatkit?.classicMode || '经典模式'}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={8} className="max-w-xs">
-                <div className="space-y-1">
-                  <p className="font-medium">
+      <div className="flex-1 min-h-0 flex flex-col">
+        <div className="shrink-0 px-4 pt-4">
+          <div className="mx-auto flex w-full max-w-7xl justify-center">
+            <div className="flex items-center gap-0.5 bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm rounded-full p-1 shadow-lg border border-slate-200 dark:border-slate-700">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setChatMode('classic')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                      chatMode === 'classic'
+                        ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    <MonitorSmartphone className="w-4 h-4" />
                     {t.chatkit?.classicMode || '经典模式'}
-                  </p>
-                  <p className="text-xs opacity-80">
-                    {t.chatkit?.classicModeDesc || '视觉模型直接执行任务'}
-                  </p>
-                </div>
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => {
-                    setChatMode('chatkit');
-                  }}
-                  className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                    chatMode === 'chatkit'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-                  }`}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent
+                  side="bottom"
+                  sideOffset={8}
+                  className="max-w-xs"
                 >
-                  <Layers className="w-4 h-4" />
-                  {t.chatkit?.layeredMode || '分层代理'}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={8} className="max-w-xs">
-                <div className="space-y-1">
-                  <p className="font-medium">
+                  <div className="space-y-1">
+                    <p className="font-medium">
+                      {t.chatkit?.classicMode || '经典模式'}
+                    </p>
+                    <p className="text-xs opacity-80">
+                      {t.chatkit?.classicModeDesc || '视觉模型直接执行任务'}
+                    </p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => {
+                      setChatMode('chatkit');
+                    }}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                      chatMode === 'chatkit'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    <Layers className="w-4 h-4" />
                     {t.chatkit?.layeredMode || '分层代理'}
-                  </p>
-                  <p className="text-xs opacity-80">
-                    {t.chatkit?.layeredModeDesc ||
-                      '规划层分解任务，执行层独立完成子任务'}
-                  </p>
-                </div>
-              </TooltipContent>
-            </Tooltip>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent
+                  side="bottom"
+                  sideOffset={8}
+                  className="max-w-xs"
+                >
+                  <div className="space-y-1">
+                    <p className="font-medium">
+                      {t.chatkit?.layeredMode || '分层代理'}
+                    </p>
+                    <p className="text-xs opacity-80">
+                      {t.chatkit?.layeredModeDesc ||
+                        '规划层分解任务，执行层独立完成子任务'}
+                    </p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </div>
           </div>
         </div>
 
         {/* Content area */}
-        <div className="flex-1 flex items-stretch justify-center min-h-0 px-4 py-4 pt-16">
+        <div className="flex-1 min-h-0 px-4 pb-4 pt-3">
           {!currentDevice ? (
-            <div className="flex-1 flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+            <div className="mx-auto flex h-full w-full max-w-7xl items-center justify-center bg-slate-50 dark:bg-slate-950">
               <div className="text-center">
                 <div className="flex h-20 w-20 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 mx-auto mb-4">
                   <Smartphone className="w-10 h-10 text-slate-400" />
@@ -1213,10 +1222,10 @@ export function ChatComponent() {
           ) : (
             <div
               key={currentDevice.serial}
-              className="w-full max-w-7xl flex items-stretch justify-center min-h-0"
+              className="mx-auto flex h-full w-full max-w-7xl min-h-0 items-stretch"
             >
               {chatMode === 'chatkit' ? (
-                <div className="w-full flex items-stretch justify-center">
+                <div className="flex w-full min-h-0 items-stretch">
                   <ChatKitPanel
                     deviceId={currentDevice.id}
                     deviceSerial={currentDevice.serial}
@@ -1229,7 +1238,7 @@ export function ChatComponent() {
                   />
                 </div>
               ) : (
-                <div className="w-full flex items-stretch justify-center">
+                <div className="flex w-full min-h-0 items-stretch">
                   <DevicePanel
                     deviceId={currentDevice.id}
                     deviceSerial={currentDevice.serial}
